@@ -271,7 +271,7 @@ public final class Sync {
                     if (key.isEmpty()) continue;
                     int cid = JsonUtil.integer(t, "cid", Api.currentCid());
                     JsonObject mine = Stores.findHistory(cid, key);
-                    if (mine == null || JsonUtil.lng(t, "createTime", 0) > JsonUtil.lng(mine, "createTime", 0)) {
+                    if (mergeShouldApply(t, mine)) {
                         t.addProperty("cid", cid);
                         Stores.saveHistoryKeepTime(t);
                     }
@@ -362,7 +362,30 @@ public final class Sync {
         }
     }
 
-    /** 合并历史数组（key 相同取 createTime 新者）。 */
+    static volatile boolean histHealNeeded = false; // 云端记录比本地浅被拒收 → 需要回传把云端纠正回深进度
+
+    /** 合并判定：进度深者优先（集数大者胜；同集位置大者胜），深记录 24 小时内有效；都不在追时按时间戳新旧。 */
+    static boolean mergeShouldApply(JsonObject cloud, JsonObject mine) {
+        if (mine == null) return true;
+        long fresh = 24L * 60 * 60 * 1000;
+        long now = System.currentTimeMillis();
+        int cloudIdx = JsonUtil.integer(cloud, "playIndex", -1);
+        int mineIdx = JsonUtil.integer(mine, "playIndex", -1);
+        long cloudPos = JsonUtil.lng(cloud, "position", -1);
+        long minePos = JsonUtil.lng(mine, "position", -1);
+        boolean cloudDeeper = cloudIdx > mineIdx || (cloudIdx == mineIdx && cloudPos > minePos);
+        boolean mineDeeper = mineIdx > cloudIdx || (mineIdx == cloudIdx && minePos > cloudPos);
+        long cloudCt = JsonUtil.lng(cloud, "createTime", 0);
+        long mineCt = JsonUtil.lng(mine, "createTime", 0);
+        if (cloudDeeper && cloudCt > now - fresh) return true;    // 云端更深且在追 → 收下（防"浅但新"的记录顶掉进度）
+        if (mineDeeper && mineCt > now - fresh) {                 // 本地更深且在追 → 拒收，随后回传纠正云端
+            histHealNeeded = true;
+            return false;
+        }
+        return cloudCt > mineCt;
+    }
+
+    /** 合并历史数组（进度深者优先，规则见 mergeShouldApply）。 */
     static void mergeHistoryText(String text) {
         JsonArray arr = JsonUtil.parseArr(text);
         if (arr == null) return;
@@ -374,7 +397,7 @@ public final class Sync {
                 if (key.isEmpty()) continue;
                 int cid = JsonUtil.integer(t, "cid", Api.currentCid());
                 JsonObject mine = Stores.findHistory(cid, key);
-                if (mine == null || JsonUtil.lng(t, "createTime", 0) > JsonUtil.lng(mine, "createTime", 0)) {
+                if (mergeShouldApply(t, mine)) {
                     t.addProperty("cid", cid);   // 统一补 cid：避免下次按 cid 找不到导致重复保存/两端互推
                     Stores.saveHistoryKeepTime(t);
                 }
@@ -414,26 +437,35 @@ public final class Sync {
         }
     }
 
-    /** 按 key 合并两个数组：本地优先，云端独有的补在后面（保证云端永不缩水）。 */
+    /** 按 key 合并两个数组：同一 key 取"进度更深"的那份（防云端/推送内容被浅进度覆盖）。 */
     static JsonArray unionByKey(JsonArray local, JsonArray cloud) {
-        JsonArray out = new JsonArray();
-        java.util.Set<String> have = new java.util.HashSet<>();
+        java.util.LinkedHashMap<String, JsonObject> map = new java.util.LinkedHashMap<>();
         if (local != null) for (JsonElement e : local) {
             if (!e.isJsonObject()) continue;
             JsonObject t = e.getAsJsonObject();
             String k = JsonUtil.str(t, "key", "");
-            if (k.isEmpty() || !have.add(k)) continue;
-            out.add(t);
+            if (!k.isEmpty()) map.put(k, t);
         }
         if (cloud != null) for (JsonElement e : cloud) {
             if (!e.isJsonObject()) continue;
             JsonObject t = e.getAsJsonObject();
             String k = JsonUtil.str(t, "key", "");
-            if (k.isEmpty() || have.contains(k)) continue;
-            have.add(k);
-            out.add(t);
+            if (k.isEmpty()) continue;
+            JsonObject have = map.get(k);
+            if (have == null || deeperThan(t, have)) map.put(k, t);
         }
+        JsonArray out = new JsonArray();
+        for (JsonObject o : map.values()) out.add(o);
         return out;
+    }
+
+    /** t 是否比 other 进度更深（集数大者深；同集位置大者深；同深度看创建时间新者）。 */
+    static boolean deeperThan(JsonObject t, JsonObject other) {
+        int ai = JsonUtil.integer(t, "playIndex", -1), bi = JsonUtil.integer(other, "playIndex", -1);
+        if (ai != bi) return ai > bi;
+        long ap = JsonUtil.lng(t, "position", -1), bp = JsonUtil.lng(other, "position", -1);
+        if (ap != bp) return ap > bp;
+        return JsonUtil.lng(t, "createTime", 0) > JsonUtil.lng(other, "createTime", 0);
     }
 
     /** 自动同步一次（按设置间隔轮询模式）。 */
@@ -479,7 +511,7 @@ public final class Sync {
         boolean pulled = Stores.historyRevision() != histBefore || Stores.keepRevision() != keepBefore;
         long hr = Stores.historyRevision(), kr = Stores.keepRevision();
         boolean pushed = false;
-        if (pulled || hr != lastHistRev || kr != lastKeepRev) {
+        if (pulled || histHealNeeded || hr != lastHistRev || kr != lastKeepRev) {
             JsonObject files = new JsonObject();
             // 并集上传：本地 + 本轮从云端拉到的全部记录（本地保留策略/老化清掉的老记录也带上），
             // 保证云端文件只增不减，不会因为某台设备的本地精简而丢历史。
@@ -496,6 +528,7 @@ public final class Sync {
             int code = put(hurl, data);
             if (code >= 200 && code < 300) {
                 pushed = true;
+                histHealNeeded = false;
                 lastHistRev = hr;
                 lastKeepRev = kr;
             }
