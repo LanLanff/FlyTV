@@ -2499,6 +2499,20 @@ async function retryCurrent(auto) {
   if (!auto) { playCtx.retryCount = 0; toast('重试中（从 ' + fmtTime(posMs) + ' 继续）…'); }
   await startEpisode(posMs);
 }
+// 手动刷新：强制重新解析当前集（拿到新的流地址），并从当前位置继续
+async function refreshCurrent() {
+  if (!playCtx) return;
+  if (!$('playerPage').classList.contains('show')) return;
+  const v = $('video');
+  const posMs = (v && v.currentTime > 0) ? Math.floor(v.currentTime * 1000) : (playCtx.pos || 0);
+  playCtx.pos = posMs;
+  playCtx.retryCount = 0;
+  playCtx.resolved = '';   // 关键：清掉已解析地址，强制重新解析
+  playCtx.adoptHls = null;
+  playCtx.adoptMini = false;
+  toast('正在刷新：重新解析中（从 ' + fmtTime(posMs) + ' 继续）…');
+  await startEpisode(posMs);
+}
 
 // 播放中断 → 自动重试最多 3 次（同集同源，绝不自动换源；换线路由用户自己在详情页操作）
 // 但风控/转存受限类错误不自动重试（避免加重封禁），只给手动按钮
@@ -3130,6 +3144,7 @@ const TV_SVG = {
   next: '<svg viewBox="0 0 20 20"><path d="M1.4 4.8v10.4L10.2 10zM8.8 4.8v10.4L17.6 10z"/></svg>',
   list: '<svg viewBox="0 0 20 20"><path d="M3 5.2h14V7H3zM3 9.1h14v1.8H3zM3 13h14v1.8H3z"/></svg>',
   fs: '<svg viewBox="0 0 20 20"><path d="M3 3h6v2H5v4H3V3zm8 0h6v6h-2V5h-4V3zM3 11h2v4h4v2H3v-6zm12 0h2v6h-6v-2h4v-4z"/></svg>',
+  refresh: '<svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>',
 };
 function injectPlyrControls() {
   const controls = $('playerPage').querySelector('.plyr__controls');
@@ -3154,6 +3169,9 @@ function injectPlyrControls() {
   if (pip && pip.parentNode === controls) controls.insertBefore(bSpeed, pip); else controls.appendChild(bSpeed);
   controls.insertBefore(bEps, bSpeed);
   controls.insertBefore(bDm, bEps);
+  // 刷新：强制重新解析当前集（流卡住/过期时用）
+  const bRefresh = mk('btnRefresh', TV_SVG.refresh, '刷新（重新解析）', refreshCurrent);
+  if (pip && pip.parentNode === controls) controls.insertBefore(bRefresh, pip); else controls.appendChild(bRefresh);
   // 最右：整页全屏（Plyr 自带全屏已从 controls 移除——它只全屏播放器容器，选集/弹幕会被挡在屏外）
   const bFs = mk('btnFs', TV_SVG.fs, '全屏', togglePageFullscreen);
   controls.appendChild(bFs);
@@ -3481,7 +3499,7 @@ async function panKeyPull() {
   } catch (e) { toast('拉取失败: ' + (e && e.message ? e.message : e)); }
 }
 // ---- 页面版本自检：引擎比页面新时才提示刷新（可点✕关闭/30秒自动收起，点击刷新不打断播放） ----
-const PAGE_VER = '1.0.40';
+const PAGE_VER = '1.0.42';
 let verTipShown = false;
 function verNewer(a, b) { // 语义化比较：a 是否比 b 新
   const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);

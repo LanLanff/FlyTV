@@ -1,10 +1,10 @@
 {
   "win": {
-    "version": "1.0.41",
-    "size": 61455104,
-    "md5": "6a8e5b7c702a2cd30eae64b54630143f",
-    "notes": "修复桌面端部分 jar 爬虫初始化崩溃（如双星等源：dex 转换把 super 调用错翻成自调用导致栈溢出）——转换后自动修正；全屏改为整页进全屏 + 全屏控制条自动隐藏。",
-    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.41/FlyTV-1.0.41-win.zip"
+    "version": "1.0.42",
+    "size": 61455471,
+    "md5": "c45c5726136c19f6e9f94389835cb746",
+    "notes": "播放条新增「刷新」按钮（重新解析当前集，从当前位置继续）；含双星等源加载崩溃修复与全屏改进。",
+    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.42/FlyTV-1.0.42-win.zip"
   },
   "apk": {
     "versionCode": 39,
