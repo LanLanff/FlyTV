@@ -1,10 +1,10 @@
 {
   "win": {
-    "version": "1.0.43",
-    "size": 61455939,
-    "md5": "f2c07abe82918ccbdfe40406bad25784",
-    "notes": "修复跨端同步进度被覆盖的 bug（浅进度不再顶掉深进度，深进度 24 小时内受保护，云端自动纠正）；页面/引擎对齐 1.0.43。",
-    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.43/FlyTV-1.0.43-win.zip"
+    "version": "1.0.44",
+    "size": 61456651,
+    "md5": "766b522419f370795162cef7ba502e96",
+    "notes": "修复重大 bug：从详情页进入播放器后进度保存失效（网剧/网盘目录源详情 id 为空 → 保存请求被静默丢弃）；引擎回填 id + 页面兜底，播放器顶部新增「保存#n ✓」实时指示。",
+    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.44/FlyTV-1.0.44-win.zip"
   },
   "apk": {
     "versionCode": 40,
@@ -12,6 +12,6 @@
     "size": 26809241,
     "md5": "fe59fcbb09e1bf984177d99a33b46748",
     "notes": "同步合并规则升级：进度深者优先，浅进度不再顶掉深进度；拒收浅记录后自动回写纠正云端。",
-    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.43/FlyTV-1.0.40-android-arm64.apk"
+    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.44/FlyTV-1.0.40-android-arm64.apk"
   }
 }
