@@ -7,11 +7,11 @@
     "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.46/FlyTV-1.0.46-win.zip"
   },
   "apk": {
-    "versionCode": 41,
-    "versionName": "1.0.41",
-    "size": 26809406,
-    "md5": "7771821872a27e9f277e4512bf05be66",
-    "notes": "修复「下一集/上一集」从旧进度开始（现在从本集开头播放；从历史进入仍按进度续播）；含进度保存修复与同步合并修复。",
-    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.46/FlyTV-1.0.41-android-arm64.apk"
+    "versionCode": 42,
+    "versionName": "1.0.42",
+    "size": 26985030,
+    "md5": "8446cd0bc676b893862adec4b434f21c",
+    "notes": "修复：手机端网盘Key不会自动刷新导致网盘内容播放不了——现在启动自动拉取 + 每6小时一次（失败15分钟重试）；含上一版「下一集/上一集从本集开头播放」。",
+    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.46/FlyTV-1.0.42-android-arm64.apk"
   }
 }
