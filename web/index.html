@@ -876,7 +876,7 @@ border: 1px solid var(--stroke); flex: none; position: relative; box-shadow: var
 <div class="player" id="playerPage">
   <div class="bar">
     <button class="btn ghost sm" onclick="closePlayer()">← 返回</button>
-    <div class="ttl" id="playerTitle"></div>
+    <div class="ttl" id="playerTitle"></div><span id="saveDbg" style="font-size:11px;opacity:.55;margin-left:8px;white-space:nowrap;flex:none"></span>
     <div class="vp-info" id="vpRes" style="display:none"></div>
     <div class="vp-speed" id="vpSpeed" style="display:none"></div>
   </div>
@@ -956,6 +956,8 @@ async function api(path, params) {
   if (j.error) throw new Error(j.error);
   return j;
 }
+function saveDbg(txt) { try { const d = $('saveDbg'); if (d) d.textContent = txt; } catch (e) {} }
+try { window.addEventListener('error', function (e) { saveDbg('JS错误: ' + (e && e.message ? e.message : '未知')); }); } catch (e) {}
 async function apiPost(path, params) { return api(path, params); }
 
 // ---------- 软件更新 ----------
@@ -1545,6 +1547,7 @@ async function openDetail(id, name, siteKey) {
   try {
     const j = await api('detail', { site, id });
     curVod = j; curVod.siteKey = site;
+    if (!curVod.id) curVod.id = id;   // 引擎/蜘蛛没带 id（网盘目录源）→ 用请求 id 兜底，否则播放进度保存会被守卫丢掉
     $('dName').textContent = j.name || name;
     if (j.pic) {
       // 小播放器不显示海报：仅用作页面背景氛围图
@@ -2397,6 +2400,7 @@ async function play(flag, epUrl, siteKey) {
 async function startEpisode(startMs) {
   if (!playCtx) return;
   const ctx = playCtx; // 本次播放上下文：返回/切集后旧请求一律作废
+  playCtx.codecHinted = false;
   $('playerPage').classList.add('show');
   $('epsDrawer').classList.remove('show');
   const title = (playCtx.vodName || '') + (playCtx.epName ? ' · ' + playCtx.epName : '');
@@ -2767,6 +2771,38 @@ function renderDmMenu() {
   });
 }
 
+// ---- H.265(HEVC) 等"浏览器解不了"的线路检测（典型表现：有声音、画面全黑）----
+let playTick = 0;
+function hevcSupported() {
+  try {
+    return !!(window.MediaSource && (
+      MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L123.B0"') ||
+      MediaSource.isTypeSupported('video/mp4; codecs="hev1.1.6.L123.B0"')
+    ));
+  } catch (e) { return false; }
+}
+function codecsLookHevc(s) { return /hvc1|hev1|hevc/i.test(String(s || '')); }
+function showCodecIssue() {
+  if (!playCtx || playCtx.codecHinted) return;
+  playCtx.codecHinted = true;
+  setTip('🎞️ 当前线路没有画面（可能是 H.265/HEVC 编码，浏览器不支持解码）' +
+    '<br><span style="font-size:12px;opacity:.7">如果声音正常但画面全黑，多半就是它；换一条线路（或换个源）通常即可</span><br>' +
+    '<button class="btn sm" style="margin-top:10px" onclick="closePlayer()">返回换线路</button>' +
+    '<button class="btn ghost sm" style="margin-top:10px;margin-left:8px" onclick="refreshCurrent()">刷新重试</button>', true);
+}
+function attachCodecWatch(inst) {
+  try {
+    if (!inst || inst._flytvCodecHooked) return;
+    inst._flytvCodecHooked = true;
+    inst.on(Hls.Events.MANIFEST_PARSED, (ev, data) => {
+      try {
+        const cc = ((data && data.levels) || []).map(x => (x.attrs && x.attrs.CODECS) || '').join(' ');
+        console.log('[codec] 线路编码:', cc || '(未知)');
+        if (codecsLookHevc(cc) && !hevcSupported()) showCodecIssue();
+      } catch (e) {}
+    });
+  } catch (e) {}
+}
 function startPlayer(url, title, startMs, adoptHls, adoptMini) {
   if (!playCtx || !$('playerPage').classList.contains('show')) return; // 已返回 → 不再起播
   if (adoptMini) {
@@ -2806,6 +2842,7 @@ function startPlayer(url, title, startMs, adoptHls, adoptMini) {
   playCtx.pos = startMs || 0;
   playCtx.lastReport = 0;
   $('playerTitle').textContent = title || url;
+  saveDbg('v' + PAGE_VER + ' · 播放器就绪');
   setTip('缓冲中…');
   const video = $('video');
   // HLS 识别：中继 URL 里的 m3u8 后缀被 URL 编码（.m3u8%3F...），需先解码再判断
@@ -2830,6 +2867,7 @@ function startPlayer(url, title, startMs, adoptHls, adoptMini) {
         hls.on(Hls.Events.FRAG_LOADED, (ev, data) => {
           if (!/9790\/jarstream/i.test(url)) pushHlsSpeed(data && data.stats);
         });
+        attachCodecWatch(hls);
       }
       try { hls.startLoad(); } catch (e0) {}
       hls.attachMedia(video);
@@ -2841,14 +2879,26 @@ function startPlayer(url, title, startMs, adoptHls, adoptMini) {
       hls.on(Hls.Events.FRAG_LOADED, (ev, data) => {
         if (!/9790\/jarstream/i.test(url)) pushHlsSpeed(data && data.stats);
       });
+      attachCodecWatch(hls);
       hls.loadSource(url);
       hls.attachMedia(video);
     }
   } else {
     video.src = url;
   }
-  video.onplaying = () => { $('playerTip').style.display = 'none'; if (playCtx) playCtx.retryCount = 0; };
+  video.onplaying = () => { if (!(playCtx && playCtx.codecHinted)) $('playerTip').style.display = 'none'; if (playCtx) playCtx.retryCount = 0; };
   video.onerror = () => { scheduleRetry('视频加载失败'); };
+  // 兜底检测：播放几秒后时间在走但仍无画面（videoWidth=0）→ 大概率是不支持的编码（如 HEVC），给出明确提示
+  const myTick = ++playTick;
+  setTimeout(() => {
+    try {
+      if (myTick !== playTick) return;
+      if (!playCtx || playCtx.codecHinted) return;
+      if (video !== $('video')) return;
+      if (video.paused || video.currentTime < 1) return;
+      if (video.videoWidth === 0 && video.readyState >= 2 && isFinite(video.duration) && video.duration > 0) showCodecIssue();
+    } catch (e) {}
+  }, 6000);
   // 播放结束：剧集自动连播下一集；最后一集提示（单集电影不弹任何提示）
   video.onended = async () => {
     if (!playCtx) return;
@@ -2863,7 +2913,7 @@ function startPlayer(url, title, startMs, adoptHls, adoptMini) {
     if (ctx.epIndex >= 0 && ctx.epIndex < list.length - 1) {
       reportHistory(true);
       toast('自动播放下一集…');
-      switchEp(ctx.epIndex + 1);
+      switchEp(ctx.epIndex + 1, true);
     } else if (ctx.epIndex === list.length - 1) {
       setTip('🎉 已经是最后一集了' +
         '<br><span style="font-size:12px;opacity:.7">本剧已全部播完</span><br>' +
@@ -2871,7 +2921,7 @@ function startPlayer(url, title, startMs, adoptHls, adoptMini) {
     }
   };
   video.onloadedmetadata = updateRes;
-  video.onresize = updateRes;
+  video.onresize = () => { updateRes(); if (video.videoWidth > 0 && playCtx && playCtx.codecHinted) { playCtx.codecHinted = false; try { $('playerTip').style.display = 'none'; } catch (e) {} } };
   startSpeedMonitor(url);
   // 续播：元数据就绪后跳到目标进度（多事件 + 延时重试；流 seekable 未就绪时自动再试）
   if (startMs && startMs > 0) {
@@ -2945,11 +2995,29 @@ function reportHistory(force) {
   if (!force && Date.now() - (playCtx.lastReport || 0) < 9000) return;
   playCtx.lastReport = Date.now();
   const epIdx = Array.isArray(curEpsList) ? curEpsList.findIndex(e => e.url === playCtx.epUrl) : -1;
+  playCtx.saveCnt = (playCtx.saveCnt || 0) + 1;
+  const _sc = playCtx.saveCnt, _st = new Date().toTimeString().slice(0, 8);
+  saveDbg('v' + PAGE_VER + ' · 保存#' + _sc + ' ' + _st + ' …');
   apiPost('history/save', {
     siteKey: playCtx.site, vodId: playCtx.vodId, name: playCtx.vodName, pic: playCtx.vodPic,
     flag: playCtx.flag, remarks: playCtx.vodRemarks, episodeUrl: playCtx.epUrl,
     position: pos, duration: dur, index: epIdx,
-  }).catch(() => {});
+  }).then(() => {
+    saveDbg('v' + PAGE_VER + ' · 保存#' + _sc + ' ' + _st + ' ✓');
+    if (force && Date.now() - (playCtx.lastSaveToast || 0) > 5000) {
+      playCtx.lastSaveToast = Date.now();
+      try { toast('✓ 进度已保存'); } catch (e) {}
+    }
+  }).catch(err => {
+    saveDbg('v' + PAGE_VER + ' · 保存#' + _sc + ' ' + _st + ' ✗ ' + ((err && err.message) || ''));
+    try {
+      if (Date.now() - (playCtx.lastSaveErrAt || 0) > 30000) {
+        playCtx.lastSaveErrAt = Date.now();
+        toast('⚠️ 进度保存失败：' + ((err && err.message) || '网络错误'));
+      }
+    } catch (e) {}
+    try { console.warn('[history/save] 失败', err); } catch (e) {}
+  });
   saveNowPlaying();
   if (force) scheduleCloudPush(3000); else scheduleCloudPush(20000);
 }
@@ -3056,7 +3124,7 @@ async function ensurePlayList() {
         if (f2) {
           toast('该来源不可用，已自动换到「' + (alt.siteName || alt.site) + '」');
           playCtx.site = alt.site;
-          playCtx.vodId = alt.id;
+          playCtx.vodId = alt.id || playCtx.vodId;
           playCtx.vodPic = (j2 && j2.pic) || playCtx.vodPic;
           j = j2; flags = (j2.flags || []); f = f2;
         }
@@ -3114,7 +3182,7 @@ function renderPlayList() {
   });
   const a = box.querySelector('.ep.active'); if (a) a.scrollIntoView({ block: 'center' });
 }
-async function switchEp(i) {
+async function switchEp(i, fresh) {
   if (!playCtx || !playCtx.list || !playCtx.list[i]) return;
   reportHistory(true);
   playCtx.epIndex = i;
@@ -3128,7 +3196,8 @@ async function switchEp(i) {
   $('epsDrawer').classList.remove('show');
   renderPlayList();
   const saved = parseInt(localStorage.getItem(posKeyOf(playCtx.site, playCtx.vodId, playCtx.epUrl)) || '0');
-  await startEpisode(saved > 15000 ? saved : 0);
+  if (fresh) { try { toast('从本集开头播放'); } catch (e) {} }
+  await startEpisode(fresh ? 0 : (saved > 15000 ? saved : 0));
 }
 function updatePnButtons() {
   const has = playCtx && playCtx.list && playCtx.list.length > 0 && playCtx.epIndex >= 0;
@@ -3322,11 +3391,11 @@ function bindBoxClickToggle() {
   }, true);
 }
 function playPrev() {
-  if (playCtx && playCtx.list && playCtx.list.length && playCtx.epIndex > 0) switchEp(playCtx.epIndex - 1);
+  if (playCtx && playCtx.list && playCtx.list.length && playCtx.epIndex > 0) switchEp(playCtx.epIndex - 1, true);
   else toast('已是第一集');
 }
 function playNext() {
-  if (playCtx && playCtx.list && playCtx.list.length && playCtx.epIndex >= 0 && playCtx.epIndex < playCtx.list.length - 1) switchEp(playCtx.epIndex + 1);
+  if (playCtx && playCtx.list && playCtx.list.length && playCtx.epIndex >= 0 && playCtx.epIndex < playCtx.list.length - 1) switchEp(playCtx.epIndex + 1, true);
   else if (playCtx && playCtx.epIndex < 0) toggleEpsDrawer();
   else toast('已是最后一集');
 }
@@ -3499,7 +3568,7 @@ async function panKeyPull() {
   } catch (e) { toast('拉取失败: ' + (e && e.message ? e.message : e)); }
 }
 // ---- 页面版本自检：引擎比页面新时才提示刷新（可点✕关闭/30秒自动收起，点击刷新不打断播放） ----
-const PAGE_VER = '1.0.43';
+const PAGE_VER = '1.0.46';
 let verTipShown = false;
 function verNewer(a, b) { // 语义化比较：a 是否比 b 新
   const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);

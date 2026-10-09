@@ -235,7 +235,9 @@ public final class SiteService {
             }
             if (vod == null) return error("详情获取失败");
             JsonObject out = new JsonObject();
-            out.addProperty("id", JsonUtil.str(vod, "vod_id", id));
+            String vid = JsonUtil.str(vod, "vod_id", id);
+        if (vid.isEmpty()) vid = id;   // 蜘蛛返回空 vod_id（如网盘/目录源）→ 回填请求 id，避免客户端拿不到 id
+        out.addProperty("id", vid);
             out.addProperty("name", JsonUtil.str(vod, "vod_name", ""));
             out.addProperty("pic", JsonUtil.str(vod, "vod_pic", ""));
             out.addProperty("remarks", JsonUtil.str(vod, "vod_remarks", ""));

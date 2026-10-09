@@ -19,8 +19,8 @@ import java.util.zip.ZipEntry;
 
 /** 软件自更新：检查清单 update.json → 下载 zip → md5 校验 → 解压 → 生成替换脚本 → 退出重启。 */
 public final class Update {
-    public static final String VERSION = "1.0.43";
-    public static final String BUILD = "2026-09-28";
+    public static final String VERSION = "1.0.46";
+    public static final String BUILD = "2026-10-09";
     // 公开版默认从 GitHub 仓库清单更新；自建服务器可用设置项 update_url 覆盖
     private static final String DEFAULT_MANIFEST = "https://raw.githubusercontent.com/LanLanff/FlyTV/main/update.json";
 

@@ -354,6 +354,7 @@ public final class Api {
             String siteKey = p.getOrDefault("siteKey", "").trim();
             String vodId = p.getOrDefault("vodId", "").trim();
             if (siteKey.isEmpty() || vodId.isEmpty()) {
+                Logger.e("HistorySave", "缺少参数: " + p);
                 JsonObject o = new JsonObject();
                 o.addProperty("error", "missing siteKey/vodId");
                 return o.toString();
@@ -371,6 +372,7 @@ public final class Api {
             h.addProperty("duration", parseLong(p.getOrDefault("duration", "-1")));
             h.addProperty("speed", 1);
             Stores.saveHistory(h);
+            Logger.d("HistorySave", "保存 " + siteKey + "@" + vodId + " idx=" + h.get("playIndex") + " pos=" + h.get("position") + " ep=" + h.get("episodeUrl").getAsString().length() + "字");
             JsonObject o = new JsonObject();
             o.addProperty("ok", true);
             return o.toString();

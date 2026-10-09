@@ -116,6 +116,32 @@ public class Host {
         ex.close();
     }
 
+    /** 截断输出堆栈（深递归的 StackOverflowError 会打印几万行，撑爆日志）。 */
+    static void printShortTrace(Throwable e, int cap) {
+        try {
+            StackTraceElement[] st = e.getStackTrace();
+            int n = Math.min(cap, st.length);
+            for (int i = 0; i < n; i++) System.out.println("\tat " + st[i]);
+            if (st.length > cap) System.out.println("\t... （省略 " + (st.length - cap) + " 行堆栈）");
+            Throwable c = e.getCause();
+            if (c != null) {
+                System.out.println("Caused by: " + c);
+                StackTraceElement[] cs = c.getStackTrace();
+                int m = Math.min(cap, cs.length);
+                for (int i = 0; i < m; i++) System.out.println("\tat " + cs[i]);
+                if (cs.length > cap) System.out.println("\t... （省略 " + (cs.length - cap) + " 行堆栈）");
+            }
+        } catch (Throwable ignored) { }
+    }
+
+    static boolean isStackOverflow(Throwable t) {
+        Throwable x = t;
+        for (int i = 0; x != null && i < 8; i++, x = x.getCause()) {
+            if (x instanceof StackOverflowError) return true;
+        }
+        return false;
+    }
+
     static void async(HttpExchange ex, Handler h) {
         Executors.newSingleThreadExecutor().submit(() -> {
             try { h.handle(ex); }
@@ -124,7 +150,7 @@ public class Host {
                 String text = (msg == null || msg.isEmpty()) ? e.toString() : (e.getClass().getSimpleName() + ": " + msg);
                 try { sendError(ex, 500, text); } catch (Throwable ignored) { }
                 System.out.println("[jar-host][error] " + text);
-                e.printStackTrace();
+                printShortTrace(e, 40);
             }
             finally { try { ex.close(); } catch (Throwable ignored) { } }
         });
@@ -202,6 +228,14 @@ public class Host {
             Method init = com.github.catvod.crawler.Spider.class.getMethod("init", android.content.Context.class, String.class);
             invokeWithTimeout(session.spider, init, new Object[]{ new HostContext(), effectiveExt }, 45000, "spider.init");
         } catch (Throwable first) {
+            if (isStackOverflow(first)) {
+                // 偶发的类初始化递归（StackOverflowError）：等 300ms 重试一次，多数情况可自愈
+                log("init StackOverflow（首次），300ms 后重试一次");
+                try { Thread.sleep(300); } catch (InterruptedException ignored) { }
+                Method init2 = com.github.catvod.crawler.Spider.class.getMethod("init", android.content.Context.class, String.class);
+                invokeWithTimeout(session.spider, init2, new Object[]{ new HostContext(), effectiveExt }, 45000, "spider.init-retry");
+                return;
+            }
             if (!session.className.endsWith(".Wogg")) throw first;
             throw first;
         }

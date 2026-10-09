@@ -48,7 +48,9 @@ public final class WebStatic {
         int dot = name.lastIndexOf('.');
         String ext = dot >= 0 ? name.substring(dot + 1).toLowerCase() : "";
         ex.getResponseHeaders().set("Content-Type", MIMES.getOrDefault(ext, "application/octet-stream"));
-        ex.getResponseHeaders().set("Cache-Control", "no-cache");
+        ex.getResponseHeaders().set("Cache-Control", "no-cache, no-store, must-revalidate");
+        ex.getResponseHeaders().set("Pragma", "no-cache");
+        ex.getResponseHeaders().set("Expires", "0");
         ex.sendResponseHeaders(200, bytes.length);
         try (OutputStream os = ex.getResponseBody()) { os.write(bytes); }
     }
