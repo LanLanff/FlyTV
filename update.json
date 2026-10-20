@@ -1,10 +1,10 @@
 {
   "win": {
-    "version": "1.0.46",
-    "size": 61458134,
-    "md5": "00d7f4efd5e3e098566b26086d8315ec",
-    "notes": "网页播放器新增「无画面/HEVC 线路」明确提示（有声音黑屏类问题不再让用户猜，一键换线路）；含上一版「下一集/上一集从本集开头播放」修复。",
-    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.46/FlyTV-1.0.46-win.zip"
+    "version": "1.0.48",
+    "size": 61250641,
+    "md5": "2e40289cbdac43d9516fd66f852f7aae",
+    "notes": "修复一批播放器问题：①快速换集偶发「播回上一集」（解析竞态）；②切换配置后旧请求回灌旧内容（现在会打断并清理）；③刷新恢复播放后选集列表丢失；④播放器音量手势误触（按钮/菜单/弹幕设置区）；⑤弹幕暂停/倍速不同步、切集残留、缓存命中不按当前进度。",
+    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.48/FlyTV-1.0.48-win.zip"
   },
   "apk": {
     "versionCode": 43,
@@ -12,6 +12,6 @@
     "size": 26809395,
     "md5": "84c1a8095bb7a9de19ba8bcfcf072d66",
     "notes": "网盘Key改为仅在「网盘配置」里手动拉取/推送（撤销自动拉取）；含「下一集/上一集从本集开头播放」修复。",
-    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.46/FlyTV-1.0.43-android-arm64.apk"
+    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.48/FlyTV-1.0.43-android-arm64.apk"
   }
 }
