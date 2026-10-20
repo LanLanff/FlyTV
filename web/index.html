@@ -949,16 +949,34 @@ function imgRetry(img) {
   setTimeout(() => { img.src = base + '&r=' + (n + 1) + '&t=' + Date.now(); }, 700 * (n + 1));
 }
 
-async function api(path, params) {
-  const qs = new URLSearchParams(params || {}).toString();
-  const r = await fetch('/api/' + path + (qs ? '?' + qs : ''));
-  const j = await r.json();
-  if (j.error) throw new Error(j.error);
-  return j;
+// 配置切换隔离：切换配置后旧配置的在途请求一律作废（打断 + 代号校验），避免旧内容/旧报错回灌
+let cfgFence = 0;
+const cfgAbort = new Set();
+async function api(path, params, options) {
+  const epoch = cfgFence;
+  const scoped = /^(sites|home|category|detail|play(?:\/check)?|search(?:all|stream|poll)?|suggest)$/.test(path);
+  const controller = scoped ? new AbortController() : null;
+  if (controller) {
+    cfgAbort.add(controller);
+    if (options && options.signal) {
+      if (options.signal.aborted) controller.abort();
+      else options.signal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
+  }
+  try {
+    const qs = new URLSearchParams(params || {}).toString();
+    const r = await fetch('/api/' + path + (qs ? '?' + qs : ''), controller ? { signal: controller.signal } : undefined);
+    const j = await r.json();
+    if (scoped && (epoch !== cfgFence || controller.signal.aborted)) throw new DOMException('配置切换已打断旧请求', 'AbortError');
+    if (j.error) throw new Error(j.error);
+    return j;
+  } finally {
+    if (controller) cfgAbort.delete(controller);
+  }
 }
 function saveDbg(txt) { try { const d = $('saveDbg'); if (d) d.textContent = txt; } catch (e) {} }
 try { window.addEventListener('error', function (e) { saveDbg('JS错误: ' + (e && e.message ? e.message : '未知')); }); } catch (e) {}
-async function apiPost(path, params) { return api(path, params); }
+async function apiPost(path, params, options) { return api(path, params, options); }
 
 // ---------- 软件更新 ----------
 let updPoll = null;
@@ -1040,8 +1058,10 @@ document.querySelectorAll('.nav-item').forEach(item => { item.onclick = () => op
 // ---------- 站点（自定义下拉） ----------
 let allSites = [];
 async function initSites() {
+  const epoch = cfgFence;
   try {
     const j = await api('sites');
+    if (epoch !== cfgFence) return; // 切换配置了 → 旧站点列表作废
     allSites = j.sites || [];
     const keys = new Set(allSites.map(s => s.key));
     const urlSite = new URLSearchParams(location.search).get('site');
@@ -1049,7 +1069,7 @@ async function initSites() {
     setSiteLabel();
     renderSiteList();
     loadHome();
-  } catch (e) { $('status').textContent = '站点加载失败: ' + e.message; }
+  } catch (e) { if (epoch === cfgFence && e.name !== 'AbortError') $('status').textContent = '站点加载失败: ' + e.message; }
 }
 function setSiteLabel() {
   const s = allSites.find(x => x.key === curSite);
@@ -1092,15 +1112,19 @@ function statusDone(msg) { const el = $('status'); if (el) el.textContent = msg 
 function gridSkeleton(n) { const g = $('grid'); if (g) g.innerHTML = Array.from({ length: n || 12 }, () => '<div class="skel"></div>').join(''); }
 
 let homeList = [];
+let homeRequest = 0;
 async function loadHome() {
+  const request = ++homeRequest;
+  const site = curSite;
   statusLoad(); $('grid').innerHTML = ''; $('tabs').innerHTML = '';
   $('tabs').dataset.loaded = '1';
   removeMore();
   $('vodTitle').textContent = '点播';
   try {
-    const j = await api('home', { site: curSite });
+    const j = await api('home', { site });
+    if (request !== homeRequest || site !== curSite) return; // 期间切了站点/配置 → 丢弃这次结果
     const tabs = $('tabs');
-    j.types.forEach((t, i) => {
+    (j.types || []).forEach((t, i) => {
       const d = document.createElement('div');
       d.className = 'tab' + (i === 0 ? ' active' : '');
       d.textContent = t.name;
@@ -1114,18 +1138,22 @@ async function loadHome() {
     homeList = j.list || [];
     renderGrid($('grid'), homeList);
     statusDone(homeList.length ? '' : (j.msg || '暂无内容'));
-    if (j.types.length) loadCategory(j.types[0].id, true);
-  } catch (e) { statusDone('加载失败: ' + e.message); }
+    if ((j.types || []).length) loadCategory(j.types[0].id, true);
+  } catch (e) { if (request !== homeRequest || e.name === 'AbortError') return; statusDone('加载失败: ' + e.message); }
 }
 
 let curTid = '', curPage = 1, curPageCount = 0;
+let catRequest = 0;
 async function loadCategory(tid, silent) {
+  const request = ++catRequest;
+  const site = curSite;
   curTid = tid; curPage = 1; curPageCount = 0;
   if (!silent) gridSkeleton();
   statusLoad();
   removeMore();
   try {
-    const j = await api('category', { site: curSite, tid, pg: 1 });
+    const j = await api('category', { site, tid, pg: 1 });
+    if (request !== catRequest || site !== curSite || tid !== curTid) return; // 期间切了站点/分类 → 丢弃这次结果
     curPageCount = j.pagecount || 0;
     const list = j.list || [];
     if (list.length === 0 && homeList.length) {
@@ -1137,6 +1165,7 @@ async function loadCategory(tid, silent) {
       if (curPageCount > 1) addMore();
     }
   } catch (e) {
+    if (request !== catRequest || e.name === 'AbortError') return;
     if (homeList.length) { renderGrid($('grid'), homeList); statusDone('分类加载失败，显示首页推荐'); }
     else statusDone('加载失败: ' + e.message);
   }
@@ -1144,11 +1173,13 @@ async function loadCategory(tid, silent) {
 async function loadMore() {
   if (curPage >= curPageCount) return;
   curPage++;
+  const request = curPage, site = curSite, tid = curTid;
   try {
-    const j = await api('category', { site: curSite, tid: curTid, pg: curPage });
+    const j = await api('category', { site, tid, pg: request });
+    if (request !== curPage || site !== curSite || tid !== curTid) return; // 已经切站/切分类/重复点击 → 丢弃
     renderGrid($('grid'), j.list || [], true);
     if (curPage >= curPageCount) removeMore();
-  } catch (e) { toast(e.message); }
+  } catch (e) { if (e.name !== 'AbortError') toast(e.message); }
 }
 function addMore() {
   removeMore();
@@ -2241,14 +2272,31 @@ function renderCfgList(j) {
 }
 async function selectConfig(url) {
   if (!url) return;
-  toast('正在切换配置（爬虫初始化需几秒）…');
+  const epoch = ++cfgFence; // 旧配置的在途请求全部作废
+  for (const c of cfgAbort) { try { c.abort(); } catch (eA) {} }
+  cfgAbort.clear();
+  homeRequest++; catRequest++;
+  closeCfgPanel();
+  statusLoad('正在切换配置…');
+  toast('已打断旧加载，正在切换新配置…');
   try {
     const j = await apiPost('config/select', { url });
+    if (epoch !== cfgFence) return;
     if (j.error) { toast(j.error); return; }
+    // 清掉旧配置的内容，避免切换后还显示旧站点/旧列表
+    curSite = ''; allSites = [];
+    $('grid').innerHTML = '';
+    $('tabs').innerHTML = '';
+    try { delete $('tabs').dataset.loaded; } catch (eD) {}
     toast('已切换：' + (j.siteCount || 0) + ' 个站点');
     await initSites();
     loadSettings();
-  } catch (e) { toast('切换失败: ' + e.message); }
+  } catch (e) {
+    if (epoch !== cfgFence || e.name === 'AbortError') return;
+    toast('切换失败: ' + e.message);
+    try { await initSites(); } catch (e2) {}
+    loadSettings();
+  }
 }
 async function addConfig() {
   const url = ($('cfgUrl').value || '').trim();
@@ -2400,6 +2448,7 @@ async function play(flag, epUrl, siteKey) {
 async function startEpisode(startMs) {
   if (!playCtx) return;
   const ctx = playCtx; // 本次播放上下文：返回/切集后旧请求一律作废
+  const requestId = ctx.loadRequest = (ctx.loadRequest || 0) + 1; // 本次解析代号：快速换集后旧结果作废（否则可能播回上一集）
   playCtx.codecHinted = false;
   $('playerPage').classList.add('show');
   $('epsDrawer').classList.remove('show');
@@ -2417,19 +2466,20 @@ async function startEpisode(startMs) {
   try { const vOld = $('video'); if (vOld && !vOld.paused) vOld.pause(); } catch (ePause) {}
   try {
     const j = await api('play', { site: playCtx.site, flag: playCtx.flag, id: playCtx.epUrl });
-    if (playCtx !== ctx) return; // 期间已返回或换了集 → 丢弃这次结果
+    if (playCtx !== ctx || ctx.loadRequest !== requestId) return; // 期间已返回或换了集 → 丢弃这次结果
     if (j && j.url) playCtx.resolved = j.url; // 记住解析结果，切回小窗时可秒用
     // 播放前预检：网盘中继地址先探 1KB —— 登录过期/文件失效直接提示，不盲目起播
     if (j.url && /\/jarstream|\/proxy\?do=pan/.test(j.url)) {
       try {
         const ck = await api('play/check', { url: j.url });
-        if (playCtx !== ctx) return;
+        if (playCtx !== ctx || ctx.loadRequest !== requestId) return;
         if (ck && ck.ok === false) { showPlayIssue(ck.reason, ck.message || ''); updatePnButtons(); return; }
       } catch (e) { /* 预检异常不拦截，交给播放器 */ }
     }
+    if (playCtx !== ctx || ctx.loadRequest !== requestId) return; // 预检期间换了集 → 不再起播
     startPlayer(j.url, title, startMs || 0);
   } catch (e) {
-    if (playCtx !== ctx) return; // 已返回 → 不再重试
+    if (playCtx !== ctx || ctx.loadRequest !== requestId) return; // 旧请求不触发重试
     const msg = String(e.message || '');
     // 转存/令牌过期类失败：自动重拉详情（拿新 fileToken，集地址后缀会变）后重试一次
     if (!playCtx.tokenRefreshed && /转存|失效|token|分享|500|过期|不存在/.test(msg) && playCtx.vodId) {
@@ -2439,7 +2489,7 @@ async function startEpisode(startMs) {
         const oldUrl = playCtx.epUrl;
         const curName = (oldList.find(x => (x.url || '') === oldUrl) || {}).name;
         const j = await api('detail', { site: playCtx.site, id: playCtx.vodId });
-        if (playCtx !== ctx) return; // 期间已返回 → 丢弃
+        if (playCtx !== ctx || ctx.loadRequest !== requestId) return; // 期间已返回 → 丢弃
         const f = (j.flags || []).find(x => x.flag === playCtx.flag) || (j.flags || [])[0];
         if (f && (f.episodes || []).length) {
           playCtx.flag = f.flag;
@@ -2626,13 +2676,14 @@ function stopSpeedMonitor() {
 }
 
 // ---- 弹幕（360kan 匹配 + dmku 弹幕库；带内存缓存与开关） ----
-let dmList = [], dmIdx = 0, dmRaf = null;
+let dmList = [], dmIdx = 0, dmRaf = null, dmGen = 0; // dmGen：弹幕加载代号，切集/重开时旧结果作废
 const dmRows = [];
 const DM_ROWS = 16;
 const dmBuf = {};
 function dmEnabled() { return localStorage.getItem('tvbox_dm') !== '0'; }
 function updateDmBtn() { const b = $('btnDm'); if (b) b.classList.toggle('on', dmEnabled()); }
 async function loadDanmaku() {
+  const generation = ++dmGen; // 本次加载代号：切集后旧结果作废
   const layer = $('dmLayer');
   if (layer) layer.innerHTML = '';
   dmList = []; dmIdx = 0;
@@ -2640,24 +2691,44 @@ async function loadDanmaku() {
   const name = playCtx.vodName;
   const ep = playCtx.epName || '';
   const ck = name + '|' + ep;
-  if (dmBuf[ck]) { dmList = dmBuf[ck]; dmIdx = 0; return; }
+  const vNow = $('video');
+  if (dmBuf[ck]) { dmList = dmBuf[ck]; dmIdx = dmLowerBound((vNow && vNow.currentTime) || 0); return; }
   try {
     const j = await api('danmaku', { name, ep });
+    if (generation !== dmGen || !dmEnabled()) return; // 期间切集/关弹幕 → 丢弃旧弹幕
     if (j && j.danmuku && j.danmuku.length) {
       dmList = j.danmuku
         .map(x => [(+x[0]) || 0, x[1], x[2], x[3], x[4]])
         .filter(x => x[4] && String(x[4]).trim().length > 0 && String(x[4]).length <= 80)
         .sort((a, b) => a[0] - b[0]);
       dmBuf[ck] = dmList;
-      dmIdx = 0;
+      const v2 = $('video');
+      dmIdx = dmLowerBound((v2 && v2.currentTime) || 0); // 按当前进度定位，避免从头补发
       if (dmList.length) toast('弹幕已加载（' + dmList.length + ' 条）');
     }
   } catch (e) { /* 静默，不打扰播放 */ }
 }
 function startDmLoop() {
   stopDmLoop();
+  let lastPaused = false, lastRate = 1;
+  const syncAnim = (v) => { // 弹幕与视频同步：暂停/倍速时，已飞出的弹幕一起停下/变速
+    const layer = $('dmLayer');
+    if (!v || !layer) return;
+    try {
+      layer.getAnimations({ subtree: true }).forEach(a => {
+        const rate = v.playbackRate || 1;
+        if (Math.abs((a.playbackRate || 1) - rate) > 0.001) a.playbackRate = rate;
+        if (v.paused && a.playState === 'running') a.pause();
+        else if (!v.paused && a.playState === 'paused') a.play();
+      });
+    } catch (eSync) {}
+  };
   const loop = () => {
     const v = $('video');
+    if (v) {
+      const paused = !!v.paused, rate = v.playbackRate || 1;
+      if (paused !== lastPaused || Math.abs(rate - lastRate) > 0.001) { lastPaused = paused; lastRate = rate; syncAnim(v); }
+    }
     if (v && dmList.length && !v.paused) {
       const t = v.currentTime;
       if (dmIdx > 0 && dmList[dmIdx - 1] && dmList[dmIdx - 1][0] > t + 1) dmIdx = dmLowerBound(t);
@@ -2670,7 +2741,7 @@ function startDmLoop() {
   };
   dmRaf = requestAnimationFrame(loop);
 }
-function stopDmLoop() { if (dmRaf) cancelAnimationFrame(dmRaf); dmRaf = null; }
+function stopDmLoop() { if (dmRaf) cancelAnimationFrame(dmRaf); dmRaf = null; dmGen++; }
 function dmLowerBound(t) {
   let lo = 0, hi = dmList.length;
   while (lo < hi) { const mid = (lo + hi) >> 1; if (dmList[mid][0] < t) lo = mid + 1; else hi = mid; }
@@ -2758,7 +2829,7 @@ function renderDmMenu() {
         localStorage.setItem('tvbox_dm', nowOn ? '1' : '0');
         updateDmBtn();
         if (nowOn) loadDanmaku();
-        else { dmList = []; dmIdx = 0; const l = $('dmLayer'); if (l) l.innerHTML = ''; }
+        else { dmGen++; dmList = []; dmIdx = 0; clearDmLayer(); }
       } else if (kind === 'scale') {
         localStorage.setItem('tvbox_dm_scale', el.dataset.v);
         clearDmLayer();
@@ -2973,7 +3044,7 @@ function startPlayer(url, title, startMs, adoptHls, adoptMini) {
   }
   video.play().catch(() => {});
   // 弹幕：清层、启动循环、拉取、seek 定位
-  dmList = []; dmIdx = 0;
+  dmList = []; dmIdx = 0; dmGen++; // 旧弹幕结果作废
   const dmLayerEl = $('dmLayer'); if (dmLayerEl) dmLayerEl.innerHTML = '';
   video.onseeking = () => { if (dmList.length) dmIdx = dmLowerBound(video.currentTime); };
   startDmLoop();
@@ -3061,7 +3132,7 @@ function saveNowPlaying() {
     sessionStorage.setItem(NP_KEY, JSON.stringify({
       site: playCtx.site, flag: playCtx.flag, epUrl: playCtx.epUrl, epIndex: playCtx.epIndex,
       epName: playCtx.epName, vodId: playCtx.vodId, vodName: playCtx.vodName, vodPic: playCtx.vodPic,
-      vodRemarks: playCtx.vodRemarks, pos, ts: Date.now(),
+      vodRemarks: playCtx.vodRemarks, list: Array.isArray(playCtx.list) ? playCtx.list : [], pos, ts: Date.now(),
     }));
   } catch (e) {}
 }
@@ -3075,8 +3146,9 @@ async function restoreNowPlaying() {
   playCtx = {
     site: np.site, flag: np.flag, epUrl: np.epUrl, epIndex: np.epIndex ?? -1, epName: np.epName || '',
     vodId: np.vodId || '', vodName: np.vodName || '', vodPic: np.vodPic || '', vodRemarks: np.vodRemarks || '',
-    list: [], pos: np.pos || 0, lastReport: 0, autoRetried: false,
+    list: Array.isArray(np.list) ? np.list : [], pos: np.pos || 0, lastReport: 0, autoRetried: false,
   };
+  if (playCtx.list.length) { try { renderPlayList(); updatePnButtons(); } catch (eR) {} }
   toast('已恢复上次播放，从 ' + fmtTime(np.pos || 0) + ' 继续');
   await startEpisode(np.pos || 0);
 }
@@ -3292,7 +3364,8 @@ function bindVolumeGestures() {
   page._volBound = true;
   page.addEventListener('wheel', (e) => {
     if (!plyr || !page.classList.contains('show')) return;
-    if (e.target.closest && e.target.closest('.eps-drawer')) return;
+    if (!e.target.closest || !e.target.closest('#playerPage .box')) return;
+    if (e.target.closest('#playerPage .plyr__controls,#playerPage .eps-drawer,#playerPage .speed-menu,#playerPage button,#playerPage a,#playerPage input,[role="slider"]')) return;
     e.preventDefault();
     plyr.muted = false;
     plyr.volume = Math.min(1, Math.max(0, (plyr.volume || 0) + (e.deltaY < 0 ? 0.05 : -0.05)));
@@ -3300,7 +3373,8 @@ function bindVolumeGestures() {
   }, { passive: false });
   page.addEventListener('mousedown', (e) => {
     if (!plyr || e.button !== 0) return;
-    if (e.target.closest && (e.target.closest('.plyr__controls') || e.target.closest('.eps-drawer') || e.target.closest('.speed-menu'))) return;
+    if (!e.target.closest || !e.target.closest('#playerPage .box')) return;
+    if (e.target.closest && (e.target.closest('.plyr__controls') || e.target.closest('.eps-drawer') || e.target.closest('.speed-menu') || e.target.closest('button') || e.target.closest('input') || e.target.closest('[role="slider"]'))) return;
     volDrag = { y: e.clientY, vol: plyr.volume || 0, moved: false };
   });
   window.addEventListener('mousemove', (e) => {
@@ -3568,7 +3642,7 @@ async function panKeyPull() {
   } catch (e) { toast('拉取失败: ' + (e && e.message ? e.message : e)); }
 }
 // ---- 页面版本自检：引擎比页面新时才提示刷新（可点✕关闭/30秒自动收起，点击刷新不打断播放） ----
-const PAGE_VER = '1.0.46';
+const PAGE_VER = '1.0.48';
 let verTipShown = false;
 function verNewer(a, b) { // 语义化比较：a 是否比 b 新
   const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);
