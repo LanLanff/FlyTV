@@ -1,0 +1,31 @@
+{
+  "name": "FlyTV 影视",
+  "short_name": "FlyTV",
+  "description": "FlyTV · 本地影视播放器（点播 / 搜索 / 历史 / 云同步）",
+  "start_url": "/web",
+  "scope": "/web",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0e0f13",
+  "theme_color": "#0e0f13",
+  "icons": [
+    {
+      "src": "/web/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/web/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/web/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
