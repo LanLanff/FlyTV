@@ -517,6 +517,10 @@ border: 1px solid var(--stroke); flex: none; position: relative; box-shadow: var
   }
 </style>
 <script>try{var t=localStorage.getItem('tvbox_theme');document.documentElement.dataset.theme=t||'light';}catch(e){document.documentElement.dataset.theme='light';}</script>
+<link rel="manifest" href="/web/manifest.json">
+<link rel="apple-touch-icon" href="/web/icon-192.png">
+<meta name="theme-color" content="#0e0f13">
+<script>if ('serviceWorker' in navigator) { window.addEventListener('load', function(){ try { navigator.serviceWorker.register('/web/sw.js').catch(function(){}); } catch (e) {} }); }</script>
 </head>
 <body>
 <div class="app">
@@ -712,6 +716,35 @@ border: 1px solid var(--stroke); flex: none; position: relative; box-shadow: var
               <span class="v" id="themeRow" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"></span>
             </div>
             <div class="dim small">点击切换主题，立即生效并自动记住（下次打开还是这个配色）。</div>
+          </div>
+
+          <div class="scard">
+            <h3>播放偏好</h3>
+            <div class="srow">
+              <span class="k">跳过片头</span>
+              <span class="v" style="display:flex;gap:8px;align-items:center">
+                <input id="skipIntro" class="cfg-in" type="number" min="0" max="600" step="1" style="width:110px" placeholder="秒">
+                <span class="dim">秒（0 = 不跳）</span>
+              </span>
+            </div>
+            <div class="srow">
+              <span class="k">跳过片尾</span>
+              <span class="v" style="display:flex;gap:8px;align-items:center">
+                <input id="skipOutro" class="cfg-in" type="number" min="0" max="600" step="1" style="width:110px" placeholder="秒">
+                <span class="dim">秒（到点自动下一集）</span>
+              </span>
+            </div>
+            <div class="srow">
+              <span class="k">记住线路</span>
+              <span class="v" style="display:flex;gap:10px;align-items:center">
+                <label style="cursor:pointer;display:flex;gap:6px;align-items:center"><input type="checkbox" id="rememberLine"> 每部片子自动记住上次用的线路</label>
+              </span>
+            </div>
+            <div class="srow">
+              <span class="k"></span>
+              <span class="v"><button class="btn" onclick="savePlayPrefs()">保存</button></span>
+            </div>
+            <div class="dim small">片头/片尾按秒填写；只影响起播位置和自动连播，不影响手动拖动。</div>
           </div>
 
           <div class="scard">
@@ -1065,8 +1098,10 @@ async function initSites() {
     allSites = j.sites || [];
     const keys = new Set(allSites.map(s => s.key));
     const urlSite = new URLSearchParams(location.search).get('site');
-    curSite = (urlSite && keys.has(urlSite) ? urlSite : null) || ['玩耦', '玩偶', '快映', '木偶'].find(k => keys.has(k)) || (keys.has(j.home) ? j.home : null) || (allSites[0] && allSites[0].key) || '';
+    const lastSite = LS.get('tvbox_last_site', '');
+    curSite = (urlSite && keys.has(urlSite) ? urlSite : null) || (lastSite && keys.has(lastSite) ? lastSite : null) || ['玩耦', '玩偶', '快映', '木偶'].find(k => keys.has(k)) || (keys.has(j.home) ? j.home : null) || (allSites[0] && allSites[0].key) || '';
     setSiteLabel();
+    rememberSite();
     renderSiteList();
     loadHome();
   } catch (e) { if (epoch === cfgFence && e.name !== 'AbortError') $('status').textContent = '站点加载失败: ' + e.message; }
@@ -1082,9 +1117,9 @@ function renderSiteList() {
   const box = $('siteList');
   if (!list.length) { box.innerHTML = '<div class="site-empty">无匹配站点</div>'; return; }
   box.innerHTML = list.map(s =>
-    `<div class="site-opt ${s.key === curSite ? 'on' : ''}" data-key="${esc(s.key)}">${esc(s.name)}</div>`).join('');
+    `<div class="site-opt ${s.key === curSite ? 'on' : ''}" data-key="${esc(s.key)}">${esc(s.name)}${siteRecentlyFailed(s.key) ? '<span style="color:#e0a100;margin-left:6px" title="最近加载失败过，可换线路/稍后再试">⚠</span>' : ''}</div>`).join('');
   box.querySelectorAll('.site-opt').forEach(o => {
-    o.onclick = () => { curSite = o.dataset.key; setSiteLabel(); closeSitePanel(); loadHome(); };
+    o.onclick = () => { curSite = o.dataset.key; setSiteLabel(); rememberSite(); closeSitePanel(); loadHome(); };
   });
 }
 function toggleSitePanel(e) {
@@ -1123,6 +1158,7 @@ async function loadHome() {
   try {
     const j = await api('home', { site });
     if (request !== homeRequest || site !== curSite) return; // 期间切了站点/配置 → 丢弃这次结果
+    markSiteFail(site, false);
     const tabs = $('tabs');
     (j.types || []).forEach((t, i) => {
       const d = document.createElement('div');
@@ -1139,7 +1175,7 @@ async function loadHome() {
     renderGrid($('grid'), homeList);
     statusDone(homeList.length ? '' : (j.msg || '暂无内容'));
     if ((j.types || []).length) loadCategory(j.types[0].id, true);
-  } catch (e) { if (request !== homeRequest || e.name === 'AbortError') return; statusDone('加载失败: ' + e.message); }
+  } catch (e) { if (request !== homeRequest || e.name === 'AbortError') return; markSiteFail(site, true); statusDone('加载失败: ' + e.message); }
 }
 
 let curTid = '', curPage = 1, curPageCount = 0;
@@ -1579,6 +1615,7 @@ async function openDetail(id, name, siteKey) {
     const j = await api('detail', { site, id });
     curVod = j; curVod.siteKey = site;
     if (!curVod.id) curVod.id = id;   // 引擎/蜘蛛没带 id（网盘目录源）→ 用请求 id 兜底，否则播放进度保存会被守卫丢掉
+    const rememberedFlag = getRememberedLine(site, curVod.id || id); // 上次用的线路（有就默认选中）
     $('dName').textContent = j.name || name;
     if (j.pic) {
       // 小播放器不显示海报：仅用作页面背景氛围图
@@ -1616,19 +1653,22 @@ async function openDetail(id, name, siteKey) {
       $('dKeepBtn').textContent = hit ? '★ 已收藏' : '☆ 收藏';
     } catch (e) {}
     const flags = $('dFlags'); flags.innerHTML = '';
+    let prefIdx = (j.flags || []).findIndex(f => f.flag === rememberedFlag);
+    if (prefIdx < 0) prefIdx = 0;
     (j.flags || []).forEach((f, i) => {
       const d = document.createElement('div');
-      d.className = 'tab' + (i === 0 ? ' active' : '');
+      d.className = 'tab' + (i === prefIdx ? ' active' : '');
       d.textContent = f.flag;
       d.onclick = () => {
         document.querySelectorAll('#dFlags .tab').forEach(x => x.classList.remove('active'));
         d.classList.add('active');
+        saveRememberedLine(site, curVod.id || id, f.flag);
         renderEps(f, j);
         try { const e0 = (f.episodes || [])[0]; if (e0) previewEpisode(f.flag, e0.url, e0.name || ''); } catch (er) {}
       };
       flags.appendChild(d);
     });
-    if (j.flags && j.flags.length) renderEps(j.flags[0], j);
+    if (j.flags && j.flags.length) renderEps(j.flags[prefIdx] || j.flags[0], j);
     // 待续播（从历史点进来、且记录没有集地址）：按线路+集号定位后续播，并恢复进度
     let resumed = false;
     if (pendingResume && pendingResume.site === site && pendingResume.vodId === id && j.flags && j.flags.length) {
@@ -1659,7 +1699,7 @@ async function openDetail(id, name, siteKey) {
       if (b0) { b0.style.display = 'block'; b0.textContent = '预览加载中…'; b0.onclick = null; }
       const c0 = $('dPrevClose'); if (c0) c0.style.display = 'block';
       try {
-        const f0 = j.flags[0];
+        const f0 = j.flags[prefIdx] || j.flags[0];
         const e0 = (f0.episodes || [])[0];
         if (e0) previewEpisode(f0.flag, e0.url, e0.name || '');
       } catch (er) {}
@@ -2228,8 +2268,72 @@ function renderThemeRow() {
 
 // ---------- 设置 ----------
 let devList = [];
+// ---- 播放偏好：片头/片尾跳过、线路记忆、站点记忆/健康 ----
+const LS = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+  del(k) { try { localStorage.removeItem(k); } catch (e) {} }
+};
+function skipIntroSec() { const n = parseFloat(LS.get('tvbox_skip_intro', '0')) || 0; return n > 0 ? Math.min(600, n) : 0; }
+function skipOutroSec() { const n = parseFloat(LS.get('tvbox_skip_outro', '0')) || 0; return n > 0 ? Math.min(600, n) : 0; }
+function rememberLineOn() { return LS.get('tvbox_remember_line', '1') !== '0'; }
+function lineKey(site, id) { return 'tvbox_line:' + site + '@' + id; }
+function saveRememberedLine(site, id, flag) { if (!rememberLineOn() || !flag) return; LS.set(lineKey(site, id), flag); }
+function getRememberedLine(site, id) { return rememberLineOn() ? (LS.get(lineKey(site, id), '') || '') : ''; }
+function rememberSite() { if (curSite) LS.set('tvbox_last_site', curSite); }
+function siteFailMap() { try { const m = JSON.parse(LS.get('tvbox_sitefail', '{}')); return (m && typeof m === 'object') ? m : {}; } catch (e) { return {}; } }
+function markSiteFail(key, bad) {
+  if (!key) return;
+  const m = siteFailMap();
+  if (bad) m[key] = Date.now(); else delete m[key];
+  LS.set('tvbox_sitefail', JSON.stringify(m));
+}
+function siteRecentlyFailed(key) { const t = siteFailMap()[key] || 0; return t > 0 && (Date.now() - t) < 6 * 3600 * 1000; }
+function loadPlayPrefs() {
+  if ($('skipIntro')) $('skipIntro').value = skipIntroSec() ? String(skipIntroSec()) : '';
+  if ($('skipOutro')) $('skipOutro').value = skipOutroSec() ? String(skipOutroSec()) : '';
+  if ($('rememberLine')) $('rememberLine').checked = rememberLineOn();
+}
+function savePlayPrefs() {
+  const i = Math.max(0, Math.min(600, parseFloat((($('skipIntro') || {}).value) || '0') || 0));
+  const o = Math.max(0, Math.min(600, parseFloat((($('skipOutro') || {}).value) || '0') || 0));
+  LS.set('tvbox_skip_intro', String(Math.round(i)));
+  LS.set('tvbox_skip_outro', String(Math.round(o)));
+  LS.set('tvbox_remember_line', ($('rememberLine') && $('rememberLine').checked) ? '1' : '0');
+  toast('播放偏好已保存');
+}
+let skipOutroDoneFor = '';
+function hookSkipIntro(video, startMs) {
+  const intro = skipIntroSec();
+  if (!video || !intro || (startMs && startMs > 0)) return;
+  const seek = () => { try { if (video.currentTime < intro - 1) video.currentTime = intro; } catch (e) {} };
+  ['loadedmetadata', 'canplay', 'playing'].forEach(ev => video.addEventListener(ev, seek, { once: true }));
+}
+function hookSkipOutro(video) {
+  if (!video || video._flytvSkipHooked) return;
+  video._flytvSkipHooked = true;
+  video.addEventListener('timeupdate', () => {
+    if (!playCtx) return;
+    const o = skipOutroSec();
+    if (!o) return;
+    const dur = video.duration;
+    if (!isFinite(dur) || dur <= o + 3) return;
+    if (dur - video.currentTime > o) return;
+    const key = playCtx.epUrl || '';
+    if (skipOutroDoneFor === key) return;
+    skipOutroDoneFor = key;
+    const list = playCtx.list || [];
+    if (list.length > 1 && playCtx.epIndex >= 0 && playCtx.epIndex < list.length - 1) {
+      toast('已跳过片尾，播放下一集');
+      try { reportHistory(true); } catch (e) {}
+      switchEp(playCtx.epIndex + 1, true);
+    }
+  });
+}
+
 async function loadSettings() {
   renderThemeRow();
+  loadPlayPrefs();
   loadSyncStatus();
   loadAboutInfo();
   try {
@@ -2958,6 +3062,7 @@ function startPlayer(url, title, startMs, adoptHls, adoptMini) {
     video.src = url;
   }
   video.onplaying = () => { if (!(playCtx && playCtx.codecHinted)) $('playerTip').style.display = 'none'; if (playCtx) playCtx.retryCount = 0; };
+  try { hookSkipIntro(video, startMs); hookSkipOutro(video); } catch (eSkip) {}
   video.onerror = () => { scheduleRetry('视频加载失败'); };
   // 兜底检测：播放几秒后时间在走但仍无画面（videoWidth=0）→ 大概率是不支持的编码（如 HEVC），给出明确提示
   const myTick = ++playTick;
@@ -3642,7 +3747,7 @@ async function panKeyPull() {
   } catch (e) { toast('拉取失败: ' + (e && e.message ? e.message : e)); }
 }
 // ---- 页面版本自检：引擎比页面新时才提示刷新（可点✕关闭/30秒自动收起，点击刷新不打断播放） ----
-const PAGE_VER = '1.0.48';
+const PAGE_VER = '1.0.49';
 let verTipShown = false;
 function verNewer(a, b) { // 语义化比较：a 是否比 b 新
   const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);
