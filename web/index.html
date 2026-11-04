@@ -529,6 +529,7 @@ border: 1px solid var(--stroke); flex: none; position: relative; box-shadow: var
   .badge, .card-site, .dim, code, .srow .v { font-variant-numeric: tabular-nums; }
   .btn { transition: transform .12s ease, background .18s ease, border-color .18s ease, box-shadow .18s ease; }
   .btn:active { transform: scale(.97); }
+  .btn.dtype-on { background: var(--grad); color: #fff; border-color: transparent; }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
     .card:hover { transform: none; }
@@ -545,6 +546,7 @@ border: 1px solid var(--stroke); flex: none; position: relative; box-shadow: var
   <div class="nav">
     <div class="brand"><span class="ico"><svg viewBox="0 0 48 48" width="26" height="26"><defs><linearGradient id="flg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#22d3ee"/></linearGradient></defs><rect x="2" y="2" width="44" height="44" rx="12" fill="url(#flg)"/><path d="M16 11h17v6H22v7h9.5v6H22v12h-6z" fill="#fff"/><path d="M33.5 24.5l7 6.5-7 6.5z" fill="#fff" opacity=".9"/></svg></span><span class="text">FlyTV</span></div>
     <div class="nav-item active" data-panel="vod"><span class="ico">🏠</span><span class="text">点播</span></div>
+    <div class="nav-item" data-panel="discover"><span class="ico">🧭</span><span class="text">发现</span></div>
     <div class="nav-item" data-panel="search"><span class="ico">🔍</span><span class="text">搜索</span></div>
     <div class="nav-item" data-panel="history"><span class="ico">🕐</span><span class="text">历史记录</span></div>
     <div class="nav-item" data-panel="keep"><span class="ico">⭐</span><span class="text">收藏</span></div>
@@ -584,6 +586,17 @@ border: 1px solid var(--stroke); flex: none; position: relative; box-shadow: var
       </div>
 
       <!-- 搜索（独立页 + 联想） -->
+      <div class="panel" id="panelDiscover">
+        <div class="title-row">发现</div>
+        <div class="tabs" id="discoverTabs"></div>
+        <div style="display:flex;gap:8px;align-items:center;margin:4px 0 12px">
+          <button class="btn ghost sm" id="dTypeMovie" onclick="setDiscoverType('movie')">电影</button>
+          <button class="btn ghost sm" id="dTypeTv" onclick="setDiscoverType('tv')">剧集</button>
+          <span class="dim small" style="margin-left:auto">数据来自豆瓣 · 点海报直接全站搜索</span>
+        </div>
+        <div class="grid" id="discoverGrid"></div>
+      </div>
+
       <div class="panel" id="panelSearch">
         <div class="search-hero" id="searchHero">
           <h1>发现你的<span class="grad">下一部好剧</span></h1>
@@ -1110,6 +1123,7 @@ function openPanel(name) {
   if (el) el.classList.add('show');
   $('topbar').style.display = (name === 'vod') ? '' : 'none';
   if (name === 'vod' && !$('tabs').dataset.loaded) loadHome();
+  if (name === 'discover') loadDiscover();
     if (name === 'search') { setTimeout(() => $('sInput').focus(), 60); loadSearchHistory(); loadHotWords(); }
   if (name === 'history') syncThenHistory();
   if (name === 'keep') loadKeep();
@@ -2397,6 +2411,134 @@ async function runDiagnose() {
   }
 }
 
+// ---- 发现页（豆瓣）----
+let discoverType = 'movie';
+let discoverTag = '热门';
+const DISCOVER_TAGS = ['热门', '最新', '豆瓣高分', '华语', '欧美', '韩国', '日本'];
+function discoverSort(tag) { if (tag === '最新') return 'time'; if (tag === '豆瓣高分') return 'rank'; return 'recommend'; }
+function initDiscoverTabs() {
+  const box = $('discoverTabs');
+  if (!box || box.dataset.ready) return;
+  box.dataset.ready = '1';
+  box.innerHTML = DISCOVER_TAGS.map(t => `<div class="tab${t === discoverTag ? ' active' : ''}" data-tag="${esc(t)}">${esc(t)}</div>`).join('');
+  box.querySelectorAll('.tab').forEach(el => {
+    el.onclick = () => {
+      discoverTag = el.dataset.tag;
+      box.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === el));
+      loadDiscover(true);
+    };
+  });
+}
+function setDiscoverType(t) {
+  if (discoverType === t) return;
+  discoverType = t;
+  loadDiscover(true);
+}
+function setDiscoverTypeButtons() {
+  const m = $('dTypeMovie'), v = $('dTypeTv');
+  if (m) m.classList.toggle('dtype-on', discoverType === 'movie');
+  if (v) v.classList.toggle('dtype-on', discoverType === 'tv');
+}
+async function loadDiscover(force) {
+  const grid = $('discoverGrid');
+  if (!grid) return;
+  initDiscoverTabs();
+  setDiscoverTypeButtons();
+  const key = discoverType + '|' + discoverTag;
+  if (!force && grid.dataset.key === key && grid.children.length) return;
+  grid.dataset.key = key;
+  grid.innerHTML = '<div class="dim" style="padding:12px">加载中…</div>';
+  try {
+    const j = await api('discover', { type: discoverType, tag: discoverTag, sort: discoverSort(discoverTag), start: 0, limit: 30 });
+    if (j.error) { grid.innerHTML = '<div class="dim" style="padding:12px">' + esc(j.error) + '</div>'; return; }
+    const list = j.list || [];
+    if (!list.length) { grid.innerHTML = '<div class="dim" style="padding:12px">暂无数据</div>'; return; }
+    grid.innerHTML = '';
+    list.forEach(v => {
+      const c = document.createElement('div');
+      c.className = 'card';
+      c.innerHTML = '<div class="pic"><div class="ph">🎬</div>' + (v.pic ? '<img loading="lazy" decoding="async" src="' + pic(v.pic) + '" onerror="imgRetry(this)">' : '') +
+        (v.rate ? '<div class="badge">★ ' + esc(v.rate) + '</div>' : '') +
+        '<div class="shade"><div class="ttl">' + esc(v.title) + '</div></div></div>';
+      c.onclick = () => searchFromDiscover(v.title);
+      grid.appendChild(c);
+    });
+  } catch (e) {
+    grid.innerHTML = '<div class="dim" style="padding:12px">加载失败：' + esc(e.message) + '</div>';
+  }
+}
+function searchFromDiscover(title) {
+  openPanel('search');
+  const i = $('sInput');
+  if (i) i.value = title;
+  doSearchPage();
+}
+
+// ---- 外挂字幕（SRT / VTT）----
+let subUrl = null, subName = '';
+function srtToVtt(s) {
+  s = s.replace(/\r+/g, '').replace(/^\uFEFF/, '');
+  s = s.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
+  return 'WEBVTT\n\n' + s;
+}
+function pickSubtitle() {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = '.srt,.vtt,text/plain';
+  inp.onchange = () => { const f = inp.files && inp.files[0]; if (f) loadSubtitleFile(f); };
+  inp.click();
+}
+async function loadSubtitleFile(file) {
+  const name = (file.name || '').toLowerCase();
+  if (name.endsWith('.ass') || name.endsWith('.ssa')) { toast('暂不支持 ASS/SSA，请用 SRT 或 VTT 字幕'); return; }
+  try {
+    const text = await file.text();
+    const vtt = name.endsWith('.vtt') ? text : srtToVtt(text);
+    applySubtitle(vtt, file.name || '外挂字幕');
+  } catch (e) { toast('字幕读取失败: ' + e.message); }
+}
+function applySubtitle(vttText, name) {
+  const v = $('video');
+  if (!v) { toast('还没有播放器'); return; }
+  clearSubtitle();
+  try {
+    subUrl = URL.createObjectURL(new Blob([vttText], { type: 'text/vtt' }));
+    const track = document.createElement('track');
+    track.kind = 'subtitles'; track.label = name || '外挂字幕'; track.srclang = 'zh'; track.default = true;
+    track.src = subUrl;
+    v.appendChild(track);
+    try { track.track.mode = 'showing'; } catch (e) {}
+    subName = name || '';
+    toast('字幕已加载：' + (name || '外挂字幕'));
+  } catch (e) { toast('字幕加载失败: ' + e.message); }
+}
+function clearSubtitle() {
+  const v = $('video');
+  if (v) { try { v.querySelectorAll('track').forEach(t => t.remove()); } catch (e) {} }
+  if (subUrl) { try { URL.revokeObjectURL(subUrl); } catch (e) {} subUrl = null; }
+  subName = '';
+}
+
+// ---- 倍速 / 音量记忆 ----
+function applyPlayerPrefs() {
+  if (!plyr) return;
+  try {
+    const sp = parseFloat(localStorage.getItem('tvbox_speed') || '1');
+    if (sp > 0 && sp <= 3 && Math.abs(sp - (plyr.speed || 1)) > 0.01) plyr.speed = sp;
+    const vol = parseFloat(localStorage.getItem('tvbox_volume'));
+    if (isFinite(vol)) plyr.volume = Math.min(1, Math.max(0, vol));
+  } catch (e) {}
+}
+function bindPlayerPrefs() {
+  if (!plyr || plyr._prefsBound) return;
+  plyr._prefsBound = true;
+  try {
+    plyr.on('ratechange', () => { try { localStorage.setItem('tvbox_speed', String(plyr.speed || 1)); } catch (e) {} });
+    plyr.on('volumechange', () => { try { localStorage.setItem('tvbox_volume', String(plyr.volume)); } catch (e) {} });
+    plyr.on('ready', applyPlayerPrefs);
+  } catch (e) {}
+}
+
 async function loadSettings() {
   renderThemeRow();
   loadPlayPrefs();
@@ -3144,6 +3286,7 @@ function startPlayer(url, title, startMs, adoptHls, adoptMini) {
   }
   video.onplaying = () => { if (!(playCtx && playCtx.codecHinted)) $('playerTip').style.display = 'none'; if (playCtx) playCtx.retryCount = 0; };
   try { hookSkipIntro(video, startMs); hookSkipOutro(video); } catch (eSkip) {}
+  try { clearSubtitle(); } catch (eSub) {}
   video.onerror = () => { scheduleRetry('视频加载失败'); };
   // 兜底检测：播放几秒后时间在走但仍无画面（videoWidth=0）→ 大概率是不支持的编码（如 HEVC），给出明确提示
   const myTick = ++playTick;
@@ -3472,7 +3615,8 @@ const TV_SVG = {
   list: '<svg viewBox="0 0 20 20"><path d="M3 5.2h14V7H3zM3 9.1h14v1.8H3zM3 13h14v1.8H3z"/></svg>',
   fs: '<svg viewBox="0 0 20 20"><path d="M3 3h6v2H5v4H3V3zm8 0h6v6h-2V5h-4V3zM3 11h2v4h4v2H3v-6zm12 0h2v6h-6v-2h4v-4z"/></svg>',
   refresh: '<svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>',
-  external: '<svg viewBox="0 0 24 24"><path d="M14 4h6v6h-2V7.4l-7.3 7.3-1.4-1.4L16.6 6H14V4zM5 5h6v2H7v10h10v-4h2v6H5V5z"/></svg>'
+  external: '<svg viewBox="0 0 24 24"><path d="M14 4h6v6h-2V7.4l-7.3 7.3-1.4-1.4L16.6 6H14V4zM5 5h6v2H7v10h10v-4h2v6H5V5z"/></svg>',
+  sub: '<svg viewBox="0 0 24 24"><path d="M3 5h18a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm1 2v10h16V7H4zm2 6h5v2H6v-2zm7 0h5v2h-5v-2z"/></svg>'
 };
 function injectPlyrControls() {
   const controls = $('playerPage').querySelector('.plyr__controls');
@@ -3502,12 +3646,15 @@ function injectPlyrControls() {
   if (pip && pip.parentNode === controls) controls.insertBefore(bRefresh, pip); else controls.appendChild(bRefresh);
   const bExt = mk('btnExt', TV_SVG.external, '用本机播放器打开（MPV / VLC / PotPlayer）', openExternalPlayer);
   if (pip && pip.parentNode === controls) controls.insertBefore(bExt, pip); else controls.appendChild(bExt);
+  const bSub = mk('btnSub', TV_SVG.sub, '外挂字幕（SRT / VTT）', pickSubtitle);
+  if (pip && pip.parentNode === controls) controls.insertBefore(bSub, pip); else controls.appendChild(bSub);
   // 最右：整页全屏（Plyr 自带全屏已从 controls 移除——它只全屏播放器容器，选集/弹幕会被挡在屏外）
   const bFs = mk('btnFs', TV_SVG.fs, '全屏', togglePageFullscreen);
   controls.appendChild(bFs);
   renderSpeedLabel();
   updateDmBtn();
   updatePnButtons();
+  try { bindPlayerPrefs(); applyPlayerPrefs(); } catch (ePrefs) {}
 }
 function renderSpeedLabel() {
   const b = $('btnSpeed');
@@ -3831,7 +3978,7 @@ async function panKeyPull() {
   } catch (e) { toast('拉取失败: ' + (e && e.message ? e.message : e)); }
 }
 // ---- 页面版本自检：引擎比页面新时才提示刷新（可点✕关闭/30秒自动收起，点击刷新不打断播放） ----
-const PAGE_VER = '1.0.51';
+const PAGE_VER = '1.0.52';
 let verTipShown = false;
 function verNewer(a, b) { // 语义化比较：a 是否比 b 新
   const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);
