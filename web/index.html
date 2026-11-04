@@ -515,6 +515,24 @@ border: 1px solid var(--stroke); flex: none; position: relative; box-shadow: var
     .detail-head .pic { width: 100%; }
     .search-hero { margin-top: 4vh; }
   }
+  /* ===== 视觉与性能打磨 ===== */
+  @media (hover: hover) and (pointer: fine) {
+    .card:hover { transform: translateY(-4px); }
+  }
+  .card { contain: content; }
+  .nav-item:focus-visible, .btn:focus-visible, .tab:focus-visible,
+  .site-opt:focus-visible, .site-btn:focus-visible, .cfg-in:focus-visible,
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--accent2); outline-offset: 2px;
+  }
+  #detailBg { filter: blur(26px) saturate(1.25) !important; transform: scale(1.05); }
+  .badge, .card-site, .dim, code, .srow .v { font-variant-numeric: tabular-nums; }
+  .btn { transition: transform .12s ease, background .18s ease, border-color .18s ease, box-shadow .18s ease; }
+  .btn:active { transform: scale(.97); }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+    .card:hover { transform: none; }
+  }
 </style>
 <script>try{var t=localStorage.getItem('tvbox_theme');document.documentElement.dataset.theme=t||'light';}catch(e){document.documentElement.dataset.theme='light';}</script>
 <link rel="manifest" href="/web/manifest.json">
@@ -745,6 +763,18 @@ border: 1px solid var(--stroke); flex: none; position: relative; box-shadow: var
               <span class="v"><button class="btn" onclick="savePlayPrefs()">保存</button></span>
             </div>
             <div class="dim small">片头/片尾按秒填写；只影响起播位置和自动连播，不影响手动拖动。</div>
+          </div>
+
+          <div class="scard">
+            <h3>源诊断</h3>
+            <div class="srow">
+              <span class="k">选择站点</span>
+              <span class="v" style="display:flex;gap:8px;flex-wrap:wrap">
+                <select id="diagSite" class="combo2" style="min-width:210px;max-width:320px"></select>
+                <button class="btn" onclick="runDiagnose()">开始诊断</button>
+              </span>
+            </div>
+            <div id="diagOut" class="dim small" style="margin-top:8px">依次测试：爬虫加载 → 首页 → 分类 → 搜索。JAR 源较慢，可能要几十秒。</div>
           </div>
 
           <div class="scard">
@@ -2331,9 +2361,46 @@ function hookSkipOutro(video) {
   });
 }
 
+// ---- 源诊断 ----
+function loadDiagSites() {
+  const sel = $('diagSite');
+  if (!sel) return;
+  const cur = sel.value;
+  const list = (typeof allSites !== 'undefined' && allSites) ? allSites : [];
+  sel.innerHTML = list.length
+    ? list.map(s => `<option value="${esc(s.key)}">${esc(s.name)}</option>`).join('')
+    : '<option value="">（暂无站点，请先在点播页加载）</option>';
+  if (cur) { try { sel.value = cur; } catch (e) {} }
+}
+async function runDiagnose() {
+  const sel = $('diagSite');
+  const site = sel ? sel.value : '';
+  const out = $('diagOut');
+  if (!site) { toast('请先选择站点'); return; }
+  out.innerHTML = '<span class="dim">诊断中…（JAR 源最慢，请稍候，不要重复点击）</span>';
+  const t0 = Date.now();
+  try {
+    const j = await api('diagnose', { site });
+    if (j.error) { out.innerHTML = '<span style="color:var(--danger,#e5484d)">' + esc(j.error) + '</span>'; return; }
+    const rows = (j.steps || []).map(st =>
+      '<div style="display:flex;gap:8px;align-items:baseline;margin:5px 0;flex-wrap:wrap">' +
+      '<span style="width:16px">' + (st.ok ? '✅' : '❌') + '</span>' +
+      '<span style="min-width:120px;font-weight:600">' + esc(st.name) + '</span>' +
+      '<span class="dim" style="min-width:56px">' + (st.ms || 0) + ' ms</span>' +
+      '<span style="flex:1;min-width:180px">' + esc(st.detail || '') + '</span></div>').join('');
+    out.innerHTML =
+      '<div style="margin-bottom:6px;font-weight:600">' + (j.ok ? '✅ 全部通过' : '❌ 发现问题') +
+      ' · ' + esc(j.name || '') + '（' + esc(j.typeName || '') + '）· 总耗时 ' + (Date.now() - t0) + ' ms</div>' +
+      rows + (j.hint ? '<div class="dim" style="margin-top:6px">' + esc(j.hint) + '</div>' : '');
+  } catch (e) {
+    out.innerHTML = '<span style="color:var(--danger,#e5484d)">诊断失败：' + esc(e.message) + '</span>';
+  }
+}
+
 async function loadSettings() {
   renderThemeRow();
   loadPlayPrefs();
+  loadDiagSites();
   loadSyncStatus();
   loadAboutInfo();
   try {
@@ -2658,6 +2725,20 @@ async function retryCurrent(auto) {
   await startEpisode(posMs);
 }
 // 手动刷新：强制重新解析当前集（拿到新的流地址），并从当前位置继续
+// 用本机播放器打开（浏览器解不了的编码，如部分 HEVC/H.265）
+async function openExternalPlayer() {
+  if (!playCtx) { toast('还没有在播放的内容'); return; }
+  const v = $('video');
+  const src = (playCtx && playCtx.resolved) || (v && (v.currentSrc || v.src)) || '';
+  if (!src || src.startsWith('blob:')) { toast('当前是本站转发的流，外部播放器打不开'); return; }
+  const pos = (v && v.currentTime > 0) ? Math.floor(v.currentTime) : 0;
+  try {
+    const j = await api('open-external', { url: src, pos: String(pos) });
+    if (j.error) { toast(j.error); return; }
+    toast('已用 ' + j.player + ' 打开' + (pos > 0 ? '（从 ' + fmtTime(pos * 1000) + ' 开始）' : ''));
+  } catch (e) { toast('打开失败: ' + e.message); }
+}
+
 async function refreshCurrent() {
   if (!playCtx) return;
   if (!$('playerPage').classList.contains('show')) return;
@@ -3391,6 +3472,7 @@ const TV_SVG = {
   list: '<svg viewBox="0 0 20 20"><path d="M3 5.2h14V7H3zM3 9.1h14v1.8H3zM3 13h14v1.8H3z"/></svg>',
   fs: '<svg viewBox="0 0 20 20"><path d="M3 3h6v2H5v4H3V3zm8 0h6v6h-2V5h-4V3zM3 11h2v4h4v2H3v-6zm12 0h2v6h-6v-2h4v-4z"/></svg>',
   refresh: '<svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>',
+  external: '<svg viewBox="0 0 24 24"><path d="M14 4h6v6h-2V7.4l-7.3 7.3-1.4-1.4L16.6 6H14V4zM5 5h6v2H7v10h10v-4h2v6H5V5z"/></svg>'
 };
 function injectPlyrControls() {
   const controls = $('playerPage').querySelector('.plyr__controls');
@@ -3418,6 +3500,8 @@ function injectPlyrControls() {
   // 刷新：强制重新解析当前集（流卡住/过期时用）
   const bRefresh = mk('btnRefresh', TV_SVG.refresh, '刷新（重新解析）', refreshCurrent);
   if (pip && pip.parentNode === controls) controls.insertBefore(bRefresh, pip); else controls.appendChild(bRefresh);
+  const bExt = mk('btnExt', TV_SVG.external, '用本机播放器打开（MPV / VLC / PotPlayer）', openExternalPlayer);
+  if (pip && pip.parentNode === controls) controls.insertBefore(bExt, pip); else controls.appendChild(bExt);
   // 最右：整页全屏（Plyr 自带全屏已从 controls 移除——它只全屏播放器容器，选集/弹幕会被挡在屏外）
   const bFs = mk('btnFs', TV_SVG.fs, '全屏', togglePageFullscreen);
   controls.appendChild(bFs);
@@ -3747,7 +3831,7 @@ async function panKeyPull() {
   } catch (e) { toast('拉取失败: ' + (e && e.message ? e.message : e)); }
 }
 // ---- 页面版本自检：引擎比页面新时才提示刷新（可点✕关闭/30秒自动收起，点击刷新不打断播放） ----
-const PAGE_VER = '1.0.49';
+const PAGE_VER = '1.0.50';
 let verTipShown = false;
 function verNewer(a, b) { // 语义化比较：a 是否比 b 新
   const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);
