@@ -74,6 +74,8 @@ public final class Setting {
     // ---- 常用访问器（键名与 C# 版一致） ----
     public static String configVod() { return getString("config_vod", BuiltInConfigVod); }
     public static void setConfigVod(String url) { put("config_vod", url); }
+    public static boolean mergeConfigs() { return getBool("merge_configs", false); }
+    public static void setMergeConfigs(boolean v) { put("merge_configs", v); }
     public static String configLive() { return getString("config_live", BuiltInConfigLive); }
     public static boolean localServerLan() { return getBool("local_server_lan", false); }
     public static void setLocalServerLan(boolean v) { put("local_server_lan", v); }
