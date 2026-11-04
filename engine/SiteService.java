@@ -305,7 +305,8 @@ public final class SiteService {
         try {
             if (site.type == 3) {
                 JsonArray vipFlags = new JsonArray();
-                for (String f : VodConfig.flags()) vipFlags.add(f);
+                java.util.List<String> vf = (site.vipFlags != null && !site.vipFlags.isEmpty()) ? site.vipFlags : VodConfig.flags();
+                for (String f : vf) vipFlags.add(f);
                 Map<String, Object> ps = new HashMap<>();
                 ps.put("flag", flag);
                 ps.put("id", epUrl);
