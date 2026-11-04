@@ -33,6 +33,8 @@ public final class Api {
                 case "/api/password": return password(p);
                 case "/api/setting/set": return settingSet(p);
                 case "/api/sites": return sites();
+case "/api/diagnose": return Diag.diagnose(p.getOrDefault("site", "")).toString();
+case "/api/open-external": return Diag.openExternal(p.getOrDefault("url", ""), p.getOrDefault("pos", "0")).toString();
                 case "/api/home": return home(p);
                 case "/api/category": return category(p);
                 case "/api/search": return search(p);
