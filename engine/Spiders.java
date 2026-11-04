@@ -13,13 +13,18 @@ public final class Spiders {
     private static final Map<String, Boolean> LOADED = new ConcurrentHashMap<>();
 
     /** 确保站点已加载（type3；幂等）。失败抛异常。 */
+    /** 配置切换/合并开关后清掉已加载记录（jar-host 会按需重启）。 */
+    public static void reset() {
+        LOADED.clear();
+    }
+
     public static void ensureLoaded(VodConfig.Site site) throws Exception {
         if (site == null) throw new Exception("站点为空");
         if (site.type != 3) return;
         if (LOADED.containsKey(site.key)) return;
         synchronized (LOAD_LOCK) {
             if (LOADED.containsKey(site.key)) return;
-            String jar = resolveJar();
+            String jar = (site.spider != null && !site.spider.isEmpty()) ? site.spider : resolveJar();
             if (jar.isEmpty()) throw new Exception("站点缺少 jar（配置无 spider 字段）");
             JsonObject body = new JsonObject();
             body.addProperty("siteKey", site.key);
@@ -27,7 +32,7 @@ public final class Spiders {
             body.addProperty("api", site.api);
             body.addProperty("ext", site.ext == null ? "" : site.ext);
             body.addProperty("proxyBase", "http://127.0.0.1:" + WebServer.port() + "/proxy?");
-            body.addProperty("configBase", VodConfig.url());
+            body.addProperty("configBase", (site.ownerUrl != null && !site.ownerUrl.isEmpty()) ? site.ownerUrl : VodConfig.url());
             String resp = JarHost.postJson("/load", body.toString(), 150000);
             // 校验加载结果（宿主失败时返回错误文本/500 body，不能标记为已加载）
             if (resp == null || resp.isEmpty() || (!resp.contains("\"ok\"") && !resp.contains("\"class\""))) {
