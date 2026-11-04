@@ -718,6 +718,15 @@ border: 1px solid var(--stroke); flex: none; position: relative; box-shadow: var
               </span>
             </div>
             <div class="cfg-list" id="cfgList"></div>
+            <div class="srow" style="margin-top:10px">
+              <span class="k">多仓合并</span>
+              <span class="v" style="display:flex;gap:8px;align-items:center">
+                <label style="cursor:pointer;display:flex;gap:6px;align-items:center">
+                  <input type="checkbox" id="mergeCfg" onchange="toggleMergeConfigs()"> 合并全部配置的站点
+                </label>
+              </span>
+            </div>
+            <div class="dim small">开启后：所有配置的站点合并成一个列表（同名站点自动加 #2），每个站点仍用自己配置的 jar 播放。</div>
           </div>
 
           <div class="scard">
@@ -2375,6 +2384,22 @@ function hookSkipOutro(video) {
   });
 }
 
+async function toggleMergeConfigs() {
+  const box = $('mergeCfg');
+  const on = box && box.checked ? 1 : 0;
+  if (box) box.disabled = true;
+  try {
+    const j = await apiPost('config/merge', { on: String(on) });
+    if (j.error) toast(j.error);
+    else toast(on ? ('已合并 ' + (j.siteCount || 0) + ' 个站点') : '已切回单配置');
+  } catch (e) { toast('切换失败: ' + e.message); }
+  if (box) box.disabled = false;
+  curSite = '';
+  try { delete $('tabs').dataset.loaded; } catch (eD) {}
+  try { await initSites(); } catch (e2) {}
+  loadSettings();
+}
+
 // ---- 源诊断 ----
 function loadDiagSites() {
   const sel = $('diagSite');
@@ -2559,6 +2584,7 @@ async function loadSettings() {
       o.onclick = () => { closeCfgPanel(); if (!o.classList.contains('on')) selectConfig(o.dataset.url); };
     });
     $('stSites').textContent = (j.siteCount || 0) + ' 个站点';
+    if ($('mergeCfg')) $('mergeCfg').checked = !!j.merge;
     $('stImg').textContent = (j.imgCacheMB || 0) + ' MB / ' + (j.imgCacheCount || 0) + ' 张';
     $('stHist').textContent = (j.historyCount || 0) + ' 条';
     $('stPwd').textContent = j.pwdEnabled ? '已开启' : '未开启';
@@ -3978,7 +4004,7 @@ async function panKeyPull() {
   } catch (e) { toast('拉取失败: ' + (e && e.message ? e.message : e)); }
 }
 // ---- 页面版本自检：引擎比页面新时才提示刷新（可点✕关闭/30秒自动收起，点击刷新不打断播放） ----
-const PAGE_VER = '1.0.52';
+const PAGE_VER = '1.0.53';
 let verTipShown = false;
 function verNewer(a, b) { // 语义化比较：a 是否比 b 新
   const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);
