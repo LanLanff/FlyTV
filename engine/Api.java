@@ -54,6 +54,7 @@ case "/api/open-external": return Diag.openExternal(p.getOrDefault("url", ""), p
                 case "/api/keep/toggle": return keepToggle(p);
                 case "/api/config/add": return configAdd(p);
                 case "/api/config/select": return configSelect(p);
+    case "/api/config/merge": return configMerge(p);
                 case "/api/config/delete": return configDelete(p);
                 case "/api/cache/clear": return cacheClear(p);
                 case "/api/sync/status": return Sync.statusJson();
@@ -98,6 +99,7 @@ case "/api/open-external": return Diag.openExternal(p.getOrDefault("url", ""), p
         JsonObject o = new JsonObject();
         o.addProperty("configUrl", Setting.configVod());
         o.addProperty("siteCount", VodConfig.visibleSiteCount());
+        o.addProperty("merge", Setting.mergeConfigs());
         JsonArray cfgs = new JsonArray();
         String cur = Setting.configVod();
         for (JsonObject c : Stores.getConfigs(0)) {
@@ -446,6 +448,21 @@ case "/api/open-external": return Diag.openExternal(p.getOrDefault("url", ""), p
     }
 
     // ---------- config 管理 ----------
+    static String configMerge(Map<String, String> p) {
+        boolean on = "1".equals(p.getOrDefault("on", "0")) || "true".equalsIgnoreCase(p.getOrDefault("on", ""));
+        Setting.setMergeConfigs(on);
+        try {
+            if (on) VodConfig.loadMerged();
+            else VodConfig.load(Setting.configVod());
+        } catch (Exception e) {
+            Logger.e("Api", "合并开关失败: " + e.getMessage());
+            JsonObject o = new JsonObject();
+            o.addProperty("error", "切换失败: " + e.getMessage());
+            return o.toString();
+        }
+        return settings();
+    }
+
     static String configAdd(Map<String, String> p) {
         String url = p.getOrDefault("url", "").trim();
         if (url.isEmpty()) {
@@ -471,7 +488,7 @@ case "/api/open-external": return Diag.openExternal(p.getOrDefault("url", ""), p
             JsonObject rec = Stores.findConfig(url, 0);
             Setting.setConfigVod(url);
             Stores.saveConfig(rec);
-            VodConfig.load(url);
+            if (Setting.mergeConfigs()) VodConfig.loadMerged(); else VodConfig.load(url);
             Logger.d("Api", "配置已切换: " + url + "（" + VodConfig.visibleSiteCount() + " 站点）");
             return settings();
         } catch (Exception e) {
