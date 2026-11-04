@@ -1,10 +1,10 @@
 {
   "win": {
-    "version": "1.0.50",
-    "size": 63815139,
-    "md5": "b0e7c46427f2ae26d4654e9160fe5999",
-    "notes": "新增「源诊断」：设置里一键测试站点（爬虫/首页/分类/搜索），失败原因直接显示；播放器新增 ↗ 按钮，用本机 MPV / VLC / PotPlayer 打开（解决浏览器不支持的编码）；网盘 Cookie 改为持久化（重启不再要求重登）；界面与性能打磨（卡片动效、减少重绘、支持系统减弱动效）。",
-    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.50/FlyTV-1.0.50-win.zip"
+    "version": "1.0.51",
+    "size": 66192980,
+    "md5": "2b81ba3d81c7277ab39f9d1764312953",
+    "notes": "jar 兼容补强：补齐 protobuf/zxing/xmlpull/kxml2；源诊断失败原因翻译成人话（缺库/缺爬虫类/原生库/超时/JS 源），一眼看懂该怎么换源。",
+    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.51/FlyTV-1.0.51-win.zip"
   },
   "apk": {
     "versionCode": 43,
@@ -12,6 +12,6 @@
     "size": 26809395,
     "md5": "84c1a8095bb7a9de19ba8bcfcf072d66",
     "notes": "网盘Key改为仅在「网盘配置」里手动拉取/推送（撤销自动拉取）；含「下一集/上一集从本集开头播放」修复。",
-    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.50/FlyTV-1.0.43-android-arm64.apk"
+    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.51/FlyTV-1.0.43-android-arm64.apk"
   }
 }
