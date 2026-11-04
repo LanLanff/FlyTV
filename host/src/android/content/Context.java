@@ -29,7 +29,7 @@ public class Context {
     public File getExternalFilesDir(String type) { return getDir(type == null ? "external" : type, 0); }
 
     public SharedPreferences getSharedPreferences(String name, int mode) {
-        return SharedPreferences.DUMMY;
+        return SharedPreferences.Store.open(name);
     }
 
     public Object getSystemService(String name) {
