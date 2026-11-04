@@ -1,10 +1,10 @@
 {
   "win": {
-    "version": "1.0.51",
-    "size": 66192980,
-    "md5": "2b81ba3d81c7277ab39f9d1764312953",
-    "notes": "jar 兼容补强：补齐 protobuf/zxing/xmlpull/kxml2；源诊断失败原因翻译成人话（缺库/缺爬虫类/原生库/超时/JS 源），一眼看懂该怎么换源。",
-    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.51/FlyTV-1.0.51-win.zip"
+    "version": "1.0.52",
+    "size": 66197615,
+    "md5": "0201acf30ec1b0a0ecf5111cc2218dff",
+    "notes": "新增「发现」页（豆瓣热门/最新/高分/华语/欧美/韩国/日本，点海报直接全站搜索）；播放器新增外挂字幕（SRT/VTT）；倍速与音量自动记忆。",
+    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.52/FlyTV-1.0.52-win.zip"
   },
   "apk": {
     "versionCode": 43,
@@ -12,6 +12,6 @@
     "size": 26809395,
     "md5": "84c1a8095bb7a9de19ba8bcfcf072d66",
     "notes": "网盘Key改为仅在「网盘配置」里手动拉取/推送（撤销自动拉取）；含「下一集/上一集从本集开头播放」修复。",
-    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.51/FlyTV-1.0.43-android-arm64.apk"
+    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.52/FlyTV-1.0.43-android-arm64.apk"
   }
 }
