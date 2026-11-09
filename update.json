@@ -1,10 +1,10 @@
 {
   "win": {
-    "version": "1.0.53",
-    "size": 66200062,
-    "md5": "8f2332b575e7c2ca02fa73cb71116cd8",
-    "notes": "新增「多仓合并」：设置里可把所有配置的站点合并成一个列表，同名站点自动加 #2，每个站点仍用自己配置的 jar 播放；切换配置时自动清理旧爬虫会话。",
-    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.53/FlyTV-1.0.53-win.zip"
+    "version": "1.0.54",
+    "size": 66200935,
+    "md5": "d2371fed36442a8fb02a0703862a9c9f",
+    "notes": "修复：jsdelivr 上的 .jar 被 403（自动换镜像重试）；切配置后 jar 宿主未重启；gh-proxy 套娃地址兼容。优化：默认站点自动跳过 JS 源，站点列表标注 JS。",
+    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.54/FlyTV-1.0.54-win.zip"
   },
   "apk": {
     "versionCode": 43,
@@ -12,6 +12,6 @@
     "size": 26809395,
     "md5": "84c1a8095bb7a9de19ba8bcfcf072d66",
     "notes": "网盘Key改为仅在「网盘配置」里手动拉取/推送（撤销自动拉取）；含「下一集/上一集从本集开头播放」修复。",
-    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.53/FlyTV-1.0.43-android-arm64.apk"
+    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.54/FlyTV-1.0.43-android-arm64.apk"
   }
 }
