@@ -47,6 +47,7 @@ public final class JsSpider {
         Value bindings;
         String apiUrl = "";
         String ruleUrl = "";      // 当前已 init 的规则
+        String host = "";         // 规则里的站点域名（用于把相对图片地址补全）
         final Map<String, String> local = new HashMap<String, String>();
         long used;
     }
@@ -96,6 +97,32 @@ public final class JsSpider {
             Logger.e("JsSpider", "init 失败(" + ruleUrl + "): " + ie.asString());
             throw new Exception("JS 规则初始化失败: " + ie.asString());
         }
+        try {
+            Value hv = js.cx.eval("js", "(function(){try{var r=__DRPY_DEFAULT__.getRule?__DRPY_DEFAULT__.getRule():null;return (r&&r.host)||''}catch(e){return ''}})()");
+            js.host = (hv == null || hv.isNull()) ? "" : hv.asString();
+        } catch (Throwable ignored) { }
+    }
+
+    /** 后台预热：把当前配置里第一个 JS 源的框架先加载好（同框架的其它源共用）。 */
+    public static void warmup() {
+        try {
+            for (VodConfig.Site s : VodConfig.sites()) {
+                if (!isJs(s)) continue;
+                final VodConfig.Site site = s;
+                Thread t = new Thread(() -> {
+                    try {
+                        long t0 = System.currentTimeMillis();
+                        get(site);
+                        Logger.d("JsSpider", "预热完成: " + site.key + " " + (System.currentTimeMillis() - t0) + "ms");
+                    } catch (Throwable e) {
+                        Logger.d("JsSpider", "预热失败: " + e.getMessage());
+                    }
+                }, "js-warmup");
+                t.setDaemon(true);
+                t.start();
+                return;
+            }
+        } catch (Throwable ignored) { }
     }
 
     // ---------------- 构建 ----------------
@@ -189,6 +216,7 @@ public final class JsSpider {
             Value v = js.cx.eval("js", "try{ (function(){ var r = (" + expr + "); if (typeof r === 'string') { try { r = JSON.parse(r) } catch(e) {} } return JSON.stringify(r); })() }catch(e){ JSON.stringify({__err:String((e&&e.stack)||e)}) }");
             if (v == null || v.isNull()) return "{}";
             String s = v.asString();
+            if (s != null && js.host != null && !js.host.isEmpty()) s = fixPics(s, js.host);
             Logger.d("JsSpider", "ret[" + method + "] " + (s == null ? "null" : s.substring(0, Math.min(400, s.length()))));
             if (s != null && s.contains("\"__err\"")) throw new Exception(s.substring(0, Math.min(500, s.length())));
             return s == null ? "{}" : s;
@@ -348,6 +376,43 @@ public final class JsSpider {
         } catch (Throwable t) {
             return args.length > 1 ? args[1].toString() : "";
         }
+    }
+
+    /** 把 JS 源返回的相对图片地址补成绝对地址（否则前端代理取不到图）。 */
+    private static String fixPics(String json, String host) {
+        try {
+            JsonObject o = JsonUtil.parseObj(json);
+            if (o == null) return json;
+            JsonArray list = o.getAsJsonArray("list");
+            if (list == null) return json;
+            boolean changed = false;
+            for (JsonElement e : list) {
+                if (!e.isJsonObject()) continue;
+                JsonObject v = e.getAsJsonObject();
+                if (v.has("vod_pic") && v.get("vod_pic").isJsonPrimitive()) {
+                    String np = absPic(host, v.get("vod_pic").getAsString());
+                    if (np != null) { v.addProperty("vod_pic", np); changed = true; }
+                }
+            }
+            return changed ? o.toString() : json;
+        } catch (Throwable t) {
+            return json;
+        }
+    }
+
+    private static String absPic(String host, String p) {
+        if (p == null) return null;
+        String s = p.trim();
+        if (s.isEmpty() || s.startsWith("data:")) return null;
+        if (s.startsWith("http://") || s.startsWith("https://")) return null;
+        if (s.startsWith("//")) return "https:" + s;
+        String h = host;
+        if (!h.endsWith("/")) h = h + "/";
+        // 相对站点根目录归一化（图片基本都在站点根下，去掉 ../）
+        while (s.startsWith("../")) s = s.substring(3);
+        while (s.startsWith("./")) s = s.substring(2);
+        if (s.startsWith("/")) s = s.substring(1);
+        return h + s;
     }
 
     // ---------------- 工具 ----------------
