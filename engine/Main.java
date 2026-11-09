@@ -16,6 +16,7 @@ public final class Main {
         new Thread(() -> {
             try {
                 VodConfig.loadStartup();
+                JsSpider.warmup();   // 后台预热 JS 引擎（首次打开 JS 源不用等 20 秒）
             } finally {
                 Api.READY.countDown();
             }
