@@ -33,7 +33,7 @@ public final class Diag {
         out.addProperty("site", site.key);
         out.addProperty("name", site.name);
         out.addProperty("type", site.type);
-        out.addProperty("typeName", typeName(site.type));
+        out.addProperty("typeName", JsSpider.isJs(site) ? "JS 脚本（drpy）" : typeName(site.type));
 
         JsonArray steps = new JsonArray();
         boolean ok = true;
@@ -105,7 +105,7 @@ public final class Diag {
 
         out.add("steps", steps);
         out.addProperty("ok", ok);
-        if (!ok) out.addProperty("hint", hint(site));
+        if (!ok && !out.has("hint")) out.addProperty("hint", hint(site));
         return out;
     }
 
@@ -140,7 +140,29 @@ public final class Diag {
     private static String brief(String s) {
         if (s == null) return "";
         s = s.replace('\n', ' ').replace('\r', ' ').trim();
+        s = friendly(s);
         return s.length() > 300 ? s.substring(0, 300) + "…" : s;
+    }
+
+    /** 把常见失败翻译成人话（对齐社区改版的踩坑经验）。 */
+    private static String friendly(String s) {
+        if (s == null) return "";
+        String low = s.toLowerCase();
+        if (s.contains("no Spider subclass found in jar"))
+            return s + " → jar 里没有这个站点的爬虫类：配置与 jar 版本不匹配，或该站是 .js 源；换配置/换源即可。";
+        if (s.contains("NoClassDefFoundError: androidx/") || s.contains("NoClassDefFoundError: android/"))
+            return s + " → 该源依赖桌面端未实现的 Android 类。";
+        if (low.contains("sardine"))
+            return s + " → 缺少第三方库 sardine-android（WebDAV 支持），桌面端暂未内置。";
+        if (s.contains("NoClassDefFoundError"))
+            return s + " → jar 引用了运行环境没有的第三方类。";
+        if (s.contains("NoSuchMethodError") && low.contains("okhttp"))
+            return s + " → jar 与 okhttp 版本不兼容。";
+        if (s.contains("UnsatisfiedLinkError") || low.contains("no implementation found"))
+            return s + " → 该源含 ARM 原生库（需 unidbg），桌面端暂不支持。";
+        if (low.contains("timeout") || low.contains("timed out"))
+            return s + " → 超时：源站慢或不可达。";
+        return s;
     }
 
     // ---------------- 外部播放器 ----------------
