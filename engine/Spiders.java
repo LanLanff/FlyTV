@@ -21,6 +21,7 @@ public final class Spiders {
     public static void ensureLoaded(VodConfig.Site site) throws Exception {
         if (site == null) throw new Exception("站点为空");
         if (site.type != 3) return;
+        if (JsSpider.isJs(site)) { JsSpider.ensure(site); LOADED.put(site.key, Boolean.TRUE); return; }
         if (LOADED.containsKey(site.key)) return;
         synchronized (LOAD_LOCK) {
             if (LOADED.containsKey(site.key)) return;
@@ -45,6 +46,7 @@ public final class Spiders {
 
     /** 调用 spider 方法。extra 为附加字段（如 tid/pg/filter/key/ids/flag/id/vipFlags）。 */
     public static String call(VodConfig.Site site, String method, Map<String, Object> extra, int timeoutMs) throws Exception {
+        if (JsSpider.isJs(site)) return JsSpider.call(site, method, extra, timeoutMs);
         ensureLoaded(site);
         JsonObject body = new JsonObject();
         body.addProperty("siteKey", site.key);
