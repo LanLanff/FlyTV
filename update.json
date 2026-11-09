@@ -1,10 +1,10 @@
 {
   "win": {
-    "version": "1.0.55",
-    "size": 91319234,
-    "md5": "0595853f59710ae04be59f18c7ba6dfa",
-    "notes": "内置 JS 蜘蛛（drpy2）：支持 .js 源（首页/分类/搜索/详情/播放），与 jar 源共存；JS 引擎为 GraalJS，包体积因此增大（约 87MB）。",
-    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.55/FlyTV-1.0.55-win.zip"
+    "version": "1.0.56",
+    "size": 91320489,
+    "md5": "ca94789a6d61668dda3eaab751890814",
+    "notes": "修复 JS 源的海报：把相对图片地址（../movjpg/x.jpg）自动补成绝对地址；新增 JS 引擎后台预热，首次打开 JS 源不再干等 20~30 秒。",
+    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.56/FlyTV-1.0.56-win.zip"
   },
   "apk": {
     "versionCode": 43,
@@ -12,6 +12,6 @@
     "size": 26809395,
     "md5": "84c1a8095bb7a9de19ba8bcfcf072d66",
     "notes": "网盘Key改为仅在「网盘配置」里手动拉取/推送（撤销自动拉取）；含「下一集/上一集从本集开头播放」修复。",
-    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.55/FlyTV-1.0.43-android-arm64.apk"
+    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.56/FlyTV-1.0.43-android-arm64.apk"
   }
 }
