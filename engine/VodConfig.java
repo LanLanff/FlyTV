@@ -132,7 +132,11 @@ public final class VodConfig {
     }
 
     private static void refreshSpiderRuntime() {
-        try { Spiders.reset(); JarHost.stop(); } catch (Exception ignored) { }
+        try {
+            Spiders.reset();
+            JarHost.stop();
+            JarHost.start();
+        } catch (Exception ignored) { }
     }
 
     static JsonObject loadRoot(String url) throws Exception {
