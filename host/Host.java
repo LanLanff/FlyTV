@@ -255,13 +255,70 @@ public class Host {
         } catch (Throwable t) { return value; }
     }
 
+    /** jsdelivr 对 .jar 会 403；raw.githubusercontent 常被墙 —— 自动换镜像重试。 */
+    static List<String> mirrorCandidates(String url) {
+        List<String> out = new ArrayList<String>();
+        out.add(url);
+        try {
+            java.net.URI u = java.net.URI.create(url);
+            String host = u.getHost() == null ? "" : u.getHost();
+            String path = u.getPath() == null ? "" : u.getPath();
+            if (host.endsWith("jsdelivr.net") && path.startsWith("/gh/")) {
+                String rest = path.substring(4);
+                int i1 = rest.indexOf('/');
+                if (i1 > 0) {
+                    String owner = rest.substring(0, i1);
+                    String rest2 = rest.substring(i1 + 1);
+                    int i2 = rest2.indexOf('/');
+                    if (i2 > 0) {
+                        String repoVer = rest2.substring(0, i2);
+                        String file = rest2.substring(i2 + 1);
+                        int at = repoVer.indexOf('@');
+                        String repo = at > 0 ? repoVer.substring(0, at) : repoVer;
+                        String ver = at > 0 ? repoVer.substring(at + 1) : "master";
+                        String raw = "https://raw.githubusercontent.com/" + owner + "/" + repo + "/" + ver + "/" + file;
+                        out.add("https://ghproxy.net/" + raw);
+                        out.add("https://gh-proxy.com/" + raw);
+                        out.add(raw);
+                    }
+                }
+            } else if ("raw.githubusercontent.com".equals(host)) {
+                out.add("https://ghproxy.net/" + url);
+                out.add("https://gh-proxy.com/" + url);
+            } else if ((host.equals("gh-proxy.org") || host.equals("ghproxy.net") || host.equals("gh-proxy.com")
+                    || host.equals("ghfast.top") || host.equals("mirror.ghproxy.com") || host.equals("ghproxy.cc"))
+                    && path.startsWith("/http")) {
+                // 套娃地址（gh-proxy.org/https://raw.githubusercontent.com/...）：拆出内层直连，再换其它镜像重试
+                String inner = path.substring(1);
+                out.add(inner);
+                out.add("https://ghproxy.net/" + inner);
+                out.add("https://gh-proxy.com/" + inner);
+                out.add("https://gh-proxy.org/" + inner);
+            }
+        } catch (Exception ignored) { }
+        return out;
+    }
+
     static Path resolveRawJar(String jar, String md5) throws Exception {
         Path target = DATA_DIR.resolve("jar-" + md5 + ".jar");
         if (Files.exists(target) && Files.size(target) > 0) return target;
         if (jar.startsWith("file://")) jar = jar.substring("file://".length());
         if (jar.startsWith("http://") || jar.startsWith("https://")) {
-            log("downloading jar: " + jar);
-            byte[] bytes = httpGet(jar);
+            byte[] bytes = null;
+            Exception last = null;
+            for (String cand : mirrorCandidates(jar)) {
+                try {
+                    log("downloading jar: " + cand);
+                    bytes = httpGet(cand);
+                    if (bytes != null && bytes.length > 0) break;
+                } catch (Exception e) {
+                    last = e;
+                    log("jar 下载失败: " + cand + " -> " + e.getMessage());
+                }
+            }
+            if (bytes == null || bytes.length == 0) {
+                throw last != null ? last : new IllegalStateException("jar download failed: " + jar);
+            }
             Files.write(target, bytes);
         } else {
             Path local = Paths.get(jar);
