@@ -10,10 +10,68 @@ import java.util.regex.Pattern;
 
 /** 图片代理（等价 C# /api/pic）：并发闸门 + 磁盘缓存（原子写+完整性校验）+ 头解析重试。 */
 public final class PicProxy {
-    private static final Semaphore GATE = new Semaphore(12);
+    private static final Semaphore GATE = new Semaphore(24);
     private static final Map<String, Object> LOCKS = new HashMap<>();
 
+    static final okhttp3.OkHttpClient CLIENT;
+    static {
+        okhttp3.Dispatcher disp = new okhttp3.Dispatcher();
+        disp.setMaxRequests(64);
+        disp.setMaxRequestsPerHost(24);
+        CLIENT = new okhttp3.OkHttpClient.Builder()
+                .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+                .dispatcher(disp)
+                .build();
+    }
+
+    /** 列表返回后后台预取海报（浏览器同域最多 6 并发，预取能让图片命中缓存秒出）。 */
+    public static void prefetch(java.util.Collection<String> urls) {
+        if (urls == null || urls.isEmpty()) return;
+        int n = 0;
+        for (String u : urls) {
+            if (u == null || u.isEmpty()) continue;
+            if (n++ >= 24) break;
+            try {
+                PREFETCH.submit(() -> {
+                    try { fetch(u); } catch (Throwable ignored) { }
+                });
+            } catch (Throwable ignored) { }
+        }
+    }
+
+    static final java.util.concurrent.ExecutorService PREFETCH =
+            java.util.concurrent.Executors.newFixedThreadPool(6, r -> {
+                Thread t = new Thread(r, "pic-prefetch");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /** 同一张图只下载一次：预取和浏览器请求共享同一个 Future，避免重复下载。 */
+    static final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.CompletableFuture<byte[]>> INFLIGHT =
+            new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.CompletableFuture<byte[]>>();
+
     public static byte[] fetch(String rawUrl) throws Exception {
+        final String k = md5(rawUrl);
+        java.util.concurrent.CompletableFuture<byte[]> mine = new java.util.concurrent.CompletableFuture<byte[]>();
+        java.util.concurrent.CompletableFuture<byte[]> prev = INFLIGHT.putIfAbsent(k, mine);
+        if (prev != null) {
+            try { return prev.get(25, java.util.concurrent.TimeUnit.SECONDS); } catch (Throwable t) { return new byte[0]; }
+        }
+        try {
+            byte[] b = fetch0(rawUrl);
+            mine.complete(b);
+            return b;
+        } catch (Throwable t) {
+            mine.complete(new byte[0]);
+            if (t instanceof Exception) throw (Exception) t;
+            throw new Exception(t);
+        } finally {
+            INFLIGHT.remove(k, mine);
+        }
+    }
+
+    static byte[] fetch0(String rawUrl) throws Exception {
         File cacheDir = new File(AppPaths.Cache, "webimg");
         cacheDir.mkdirs();
         String key = md5(rawUrl);
@@ -103,11 +161,7 @@ public final class PicProxy {
     public static byte[] httpGetBytes(String url, Map<String, String> headers, int timeoutMs) throws Exception {
         okhttp3.Request.Builder b = new okhttp3.Request.Builder().url(url).get();
         for (Map.Entry<String, String> e : headers.entrySet()) b.header(e.getKey(), e.getValue());
-        okhttp3.OkHttpClient client = new okhttp3.OkHttpClient.Builder()
-                .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-                .readTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-                .build();
-        try (okhttp3.Response resp = client.newCall(b.build()).execute()) {
+        try (okhttp3.Response resp = CLIENT.newCall(b.build()).execute()) {
             okhttp3.ResponseBody body = resp.body();
             return body == null ? null : body.bytes();
         }
