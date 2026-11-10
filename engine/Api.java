@@ -454,6 +454,7 @@ case "/api/open-external": return Diag.openExternal(p.getOrDefault("url", ""), p
         try {
             if (on) VodConfig.loadMerged();
             else VodConfig.load(Setting.configVod());
+            JsSpider.warmup();
         } catch (Exception e) {
             Logger.e("Api", "合并开关失败: " + e.getMessage());
             JsonObject o = new JsonObject();
@@ -489,6 +490,7 @@ case "/api/open-external": return Diag.openExternal(p.getOrDefault("url", ""), p
             Setting.setConfigVod(url);
             Stores.saveConfig(rec);
             if (Setting.mergeConfigs()) VodConfig.loadMerged(); else VodConfig.load(url);
+            JsSpider.warmup();   // 切完配置立刻在后台预热新配置的 JS 框架
             Logger.d("Api", "配置已切换: " + url + "（" + VodConfig.visibleSiteCount() + " 站点）");
             return settings();
         } catch (Exception e) {
