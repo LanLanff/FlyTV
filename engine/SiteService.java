@@ -58,6 +58,14 @@ public final class SiteService {
             if (!e.isJsonObject()) continue;
             out.add(vodOut(e.getAsJsonObject(), site));
         }
+        java.util.List<String> pics = new java.util.ArrayList<String>();
+        for (JsonElement e : out) {
+            try {
+                String p = JsonUtil.str(e.getAsJsonObject(), "pic", "");
+                if (!p.isEmpty()) pics.add(p);
+            } catch (Exception ignored) { }
+        }
+        if (!pics.isEmpty()) PicProxy.prefetch(pics);
         return out;
     }
 
