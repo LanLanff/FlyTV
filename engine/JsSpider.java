@@ -29,7 +29,9 @@ import java.util.Map;
  */
 public final class JsSpider {
 
-    private static final int MAX_CACHE = 3;
+    private static final int MAX_CACHE = 5;
+    /** 构建串行化：预热与用户请求不会各自构建一遍（否则要等两倍时间）。 */
+    private static final Object BUILD_LOCK = new Object();
     private static final Map<String, SiteJs> CACHE = new LinkedHashMap<String, SiteJs>(4, 0.75f, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, SiteJs> eldest) {
@@ -75,9 +77,14 @@ public final class JsSpider {
             if (hit != null) hit.used = System.currentTimeMillis();
         }
         if (hit == null) {
-            SiteJs built = build(site, apiUrl, ruleUrl);
-            synchronized (CACHE) { CACHE.put(apiUrl, built); }
-            return built;
+            synchronized (BUILD_LOCK) {
+                synchronized (CACHE) { hit = CACHE.get(apiUrl); }
+                if (hit == null) {
+                    SiteJs built = build(site, apiUrl, ruleUrl);
+                    synchronized (CACHE) { CACHE.put(apiUrl, built); }
+                    return built;
+                }
+            }
         }
         if (!ruleUrl.equals(hit.ruleUrl)) {
             synchronized (hit) {
@@ -103,26 +110,27 @@ public final class JsSpider {
         } catch (Throwable ignored) { }
     }
 
-    /** 后台预热：把当前配置里第一个 JS 源的框架先加载好（同框架的其它源共用）。 */
+    /** 后台预热：把当前配置里前几个 JS 框架先加载好（同框架的其它源共用）。 */
     public static void warmup() {
-        try {
+        Thread t = new Thread(() -> {
+            int built = 0;
+            java.util.Set<String> seen = new java.util.HashSet<String>();
             for (VodConfig.Site s : VodConfig.sites()) {
                 if (!isJs(s)) continue;
-                final VodConfig.Site site = s;
-                Thread t = new Thread(() -> {
-                    try {
-                        long t0 = System.currentTimeMillis();
-                        get(site);
-                        Logger.d("JsSpider", "预热完成: " + site.key + " " + (System.currentTimeMillis() - t0) + "ms");
-                    } catch (Throwable e) {
-                        Logger.d("JsSpider", "预热失败: " + e.getMessage());
-                    }
-                }, "js-warmup");
-                t.setDaemon(true);
-                t.start();
-                return;
+                String api = (s.ownerUrl == null ? "" : s.ownerUrl) + "|" + s.api;
+                if (!seen.add(api)) continue;
+                try {
+                    long t0 = System.currentTimeMillis();
+                    get(s);
+                    Logger.d("JsSpider", "预热完成: " + s.key + " " + (System.currentTimeMillis() - t0) + "ms");
+                } catch (Throwable e) {
+                    Logger.d("JsSpider", "预热失败: " + e.getMessage());
+                }
+                if (++built >= 3) break;
             }
-        } catch (Throwable ignored) { }
+        }, "js-warmup");
+        t.setDaemon(true);
+        t.start();
     }
 
     // ---------------- 构建 ----------------
