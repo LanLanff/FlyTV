@@ -1203,15 +1203,24 @@ function gridSkeleton(n) { const g = $('grid'); if (g) g.innerHTML = Array.from(
 
 let homeList = [];
 let homeRequest = 0;
+function isJsSite(k) {
+  const s = (typeof allSites !== 'undefined' && allSites) ? allSites.find(x => x.key === k) : null;
+  return !!(s && /\.js(\?|$)/i.test(s.api || ''));
+}
 async function loadHome() {
   const request = ++homeRequest;
   const site = curSite;
   statusLoad(); $('grid').innerHTML = ''; $('tabs').innerHTML = '';
+  let slowTip = null, homeDone = false;
+  if (isJsSite(site)) slowTip = setTimeout(() => {
+    if (!homeDone && request === homeRequest) statusLoad('JS 引擎初始化中（首次约 20 秒，之后就快了）…');
+  }, 2500);
   $('tabs').dataset.loaded = '1';
   removeMore();
   $('vodTitle').textContent = '点播';
   try {
     const j = await api('home', { site });
+    homeDone = true; clearTimeout(slowTip);
     if (request !== homeRequest || site !== curSite) return; // 期间切了站点/配置 → 丢弃这次结果
     markSiteFail(site, false);
     const tabs = $('tabs');
@@ -1230,7 +1239,7 @@ async function loadHome() {
     renderGrid($('grid'), homeList);
     statusDone(homeList.length ? '' : (j.msg || '暂无内容'));
     if ((j.types || []).length) loadCategory(j.types[0].id, true);
-  } catch (e) { if (request !== homeRequest || e.name === 'AbortError') return; markSiteFail(site, true); statusDone('加载失败: ' + e.message); }
+  } catch (e) { homeDone = true; clearTimeout(slowTip); if (request !== homeRequest || e.name === 'AbortError') return; markSiteFail(site, true); statusDone('加载失败: ' + e.message); }
 }
 
 let curTid = '', curPage = 1, curPageCount = 0;
@@ -4006,7 +4015,7 @@ async function panKeyPull() {
   } catch (e) { toast('拉取失败: ' + (e && e.message ? e.message : e)); }
 }
 // ---- 页面版本自检：引擎比页面新时才提示刷新（可点✕关闭/30秒自动收起，点击刷新不打断播放） ----
-const PAGE_VER = '1.0.56';
+const PAGE_VER = '1.0.57';
 let verTipShown = false;
 function verNewer(a, b) { // 语义化比较：a 是否比 b 新
   const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);
