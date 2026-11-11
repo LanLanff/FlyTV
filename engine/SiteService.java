@@ -276,6 +276,11 @@ public final class SiteService {
 
     // ---------- search ----------
     public static JsonObject search(VodConfig.Site site, String wd, String pg) {
+        return search(site, wd, pg, 90000);
+    }
+
+    /** timeoutMs：聚合搜索时可传更短（避免慢站拖住整体）。 */
+    public static JsonObject search(VodConfig.Site site, String wd, String pg, int timeoutMs) {
         try {
             if (!site.searchable) {
                 JsonObject o = new JsonObject();
@@ -288,7 +293,7 @@ public final class SiteService {
                 ps.put("key", wd);
                 ps.put("quick", false);
                 if (pg != null && !pg.equals("1")) ps.put("pg", pg);
-                String text = Spiders.call(site, "searchContent", ps, 90000);
+                String text = Spiders.call(site, "searchContent", ps, timeoutMs);
                 list = vodsFrom(text, site);
             } else {
                 Map<String, Object> ps = new HashMap<>();
