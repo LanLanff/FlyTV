@@ -15,7 +15,12 @@ import java.util.concurrent.Executors;
 /** 流式搜索（等价 C# SearchStream/SearchPoll）：创建会话后台并行搜索全部站点，前端每秒轮询增量。 */
 public final class SearchStream {
     private static final Map<String, Session> SESSIONS = new ConcurrentHashMap<>();
-    private static final ExecutorService POOL = Executors.newFixedThreadPool(16);
+    private static final ExecutorService POOL = Executors.newFixedThreadPool(24);
+    private static final ExecutorService JS_POOL = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "js-search");
+        t.setDaemon(true);
+        return t;
+    });
 
     static final class Session {
         final String id = UUID.randomUUID().toString().replace("-", "");
@@ -39,10 +44,10 @@ public final class SearchStream {
         int totalSites = targets.size();
         java.util.concurrent.atomic.AtomicInteger finished = new java.util.concurrent.atomic.AtomicInteger();
         for (VodConfig.Site site : targets) {
-            POOL.submit(() -> {
+            Runnable task = () -> {
                 JsonArray list = new JsonArray();
                 try {
-                    JsonObject r = SiteService.search(site, wd, "1");
+                    JsonObject r = SiteService.search(site, wd, "1", 12000);
                     JsonArray l = r == null ? null : r.getAsJsonArray("list");
                     if (l != null) list = l;
                 } catch (Exception ignored) { }
@@ -51,7 +56,9 @@ public final class SearchStream {
                     s.total += list.size();
                 }
                 if (finished.incrementAndGet() >= totalSites) s.done = true;
-            });
+            };
+            // JS 源共用同一个 JS 上下文（不能并发），单独排队，避免堵死 jar/HTTP 源的搜索线程
+            if (JsSpider.isJs(site)) JS_POOL.submit(task); else POOL.submit(task);
         }
         if (totalSites == 0) s.done = true;
         JsonObject o = new JsonObject();
