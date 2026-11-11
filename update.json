@@ -1,10 +1,10 @@
 {
   "win": {
-    "version": "1.0.57",
-    "size": 91322138,
-    "md5": "fad2d1d56d5e59d1ce6281a3c013ecfe",
-    "notes": "JS 源体验优化：启动/切配置后自动预热引擎；图片预取+去重（并发 24），海报不再一张张慢慢刷；「JS 初始化」提示只在真的慢（>2.5 秒）时出现。",
-    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.57/FlyTV-1.0.57-win.zip"
+    "version": "1.0.58",
+    "size": 91322870,
+    "md5": "3d7343702c05604af80c07b7bd627de3",
+    "notes": "发现页标签不再自动切换；剧集也能用「豆瓣高分 / 最新」；评分标签放大更醒目；全站搜索更快（JS 源单独排队 + 单站超时）。",
+    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.58/FlyTV-1.0.58-win.zip"
   },
   "apk": {
     "versionCode": 43,
@@ -12,6 +12,6 @@
     "size": 26809395,
     "md5": "84c1a8095bb7a9de19ba8bcfcf072d66",
     "notes": "网盘Key改为仅在「网盘配置」里手动拉取/推送（撤销自动拉取）；含「下一集/上一集从本集开头播放」修复。",
-    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.57/FlyTV-1.0.43-android-arm64.apk"
+    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.58/FlyTV-1.0.43-android-arm64.apk"
   }
 }
