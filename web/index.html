@@ -206,6 +206,14 @@
     background: rgba(0,0,0,0.55); backdrop-filter: blur(6px);
     color: #fff; font-size: 11px; border: 1px solid rgba(255,255,255,0.14);
   }
+  /* 评分：主题紫大标签，跟 App 主色一致 */
+  .card .badge.rate {
+    right: 8px; top: 8px; padding: 5px 11px; border-radius: 11px;
+    background: linear-gradient(135deg, #7c6cf5, #a855f7);
+    color: #fff; font-size: 15px; font-weight: 800; letter-spacing: .2px;
+    border: 1px solid rgba(255,255,255,.35);
+    box-shadow: 0 4px 14px rgba(60,30,140,.45);
+  }
   .card .bar-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(0,0,0,.5); border-radius: 0 0 var(--radius) var(--radius); overflow: hidden; }
   .card .bar-progress i { display: block; height: 100%; background: var(--grad); }
   .card .del {
@@ -1211,16 +1219,11 @@ async function loadHome() {
   const request = ++homeRequest;
   const site = curSite;
   statusLoad(); $('grid').innerHTML = ''; $('tabs').innerHTML = '';
-  let slowTip = null, homeDone = false;
-  if (isJsSite(site)) slowTip = setTimeout(() => {
-    if (!homeDone && request === homeRequest) statusLoad('JS 引擎初始化中（首次约 20 秒，之后就快了）…');
-  }, 2500);
   $('tabs').dataset.loaded = '1';
   removeMore();
   $('vodTitle').textContent = '点播';
   try {
     const j = await api('home', { site });
-    homeDone = true; clearTimeout(slowTip);
     if (request !== homeRequest || site !== curSite) return; // 期间切了站点/配置 → 丢弃这次结果
     markSiteFail(site, false);
     const tabs = $('tabs');
@@ -1239,7 +1242,7 @@ async function loadHome() {
     renderGrid($('grid'), homeList);
     statusDone(homeList.length ? '' : (j.msg || '暂无内容'));
     if ((j.types || []).length) loadCategory(j.types[0].id, true);
-  } catch (e) { homeDone = true; clearTimeout(slowTip); if (request !== homeRequest || e.name === 'AbortError') return; markSiteFail(site, true); statusDone('加载失败: ' + e.message); }
+  } catch (e) { if (request !== homeRequest || e.name === 'AbortError') return; markSiteFail(site, true); statusDone('加载失败: ' + e.message); }
 }
 
 let curTid = '', curPage = 1, curPageCount = 0;
@@ -2450,12 +2453,13 @@ async function runDiagnose() {
 // ---- 发现页（豆瓣）----
 let discoverType = 'movie';
 let discoverTag = '热门';
-const DISCOVER_TAGS = ['热门', '最新', '豆瓣高分', '华语', '欧美', '韩国', '日本'];
+// 标签栏固定一套，切电影/剧集时原样不动；后端按类型把标签对应到豆瓣可用标签
+const DISCOVER_TAGS = ['热门', '最新', '豆瓣高分', '国产', '欧美', '韩国', '日本', '综艺', '纪录片'];
 function discoverSort(tag) { if (tag === '最新') return 'time'; if (tag === '豆瓣高分') return 'rank'; return 'recommend'; }
 function initDiscoverTabs() {
   const box = $('discoverTabs');
-  if (!box || box.dataset.ready) return;
-  box.dataset.ready = '1';
+  if (!box) return;
+  if (!DISCOVER_TAGS.includes(discoverTag)) discoverTag = '热门';
   box.innerHTML = DISCOVER_TAGS.map(t => `<div class="tab${t === discoverTag ? ' active' : ''}" data-tag="${esc(t)}">${esc(t)}</div>`).join('');
   box.querySelectorAll('.tab').forEach(el => {
     el.onclick = () => {
@@ -2467,7 +2471,8 @@ function initDiscoverTabs() {
 }
 function setDiscoverType(t) {
   if (discoverType === t) return;
-  discoverType = t;
+  discoverType = t;          // 只换类型，标签一律不动
+  initDiscoverTabs();
   loadDiscover(true);
 }
 function setDiscoverTypeButtons() {
@@ -2494,7 +2499,7 @@ async function loadDiscover(force) {
       const c = document.createElement('div');
       c.className = 'card';
       c.innerHTML = '<div class="pic"><div class="ph">🎬</div>' + (v.pic ? '<img loading="lazy" decoding="async" src="' + pic(v.pic) + '" onerror="imgRetry(this)">' : '') +
-        (v.rate ? '<div class="badge">★ ' + esc(v.rate) + '</div>' : '') +
+        (v.rate ? '<div class="badge rate">★ ' + esc(v.rate) + '</div>' : '') +
         '<div class="shade"><div class="ttl">' + esc(v.title) + '</div></div></div>';
       c.onclick = () => searchFromDiscover(v.title);
       grid.appendChild(c);
@@ -4015,7 +4020,7 @@ async function panKeyPull() {
   } catch (e) { toast('拉取失败: ' + (e && e.message ? e.message : e)); }
 }
 // ---- 页面版本自检：引擎比页面新时才提示刷新（可点✕关闭/30秒自动收起，点击刷新不打断播放） ----
-const PAGE_VER = '1.0.57';
+const PAGE_VER = '1.0.58';
 let verTipShown = false;
 function verNewer(a, b) { // 语义化比较：a 是否比 b 新
   const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);
