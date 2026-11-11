@@ -37,8 +37,22 @@ public final class Discover {
             }
         }
 
+        // 前端只有一套标签：这里按类型对应到豆瓣识别的标签
+        String qTag = tag;
+        String qSort = sort;
+        if ("tv".equals(type)) {
+            if ("国产".equals(tag)) qTag = "国产剧";
+            else if ("欧美".equals(tag)) qTag = "美剧";
+            else if ("韩国".equals(tag)) qTag = "韩剧";
+            else if ("日本".equals(tag)) qTag = "日剧";
+            else if ("豆瓣高分".equals(tag)) { qTag = "热门"; qSort = "rank"; }   // 剧集没有高分标签，按评分排序
+            else if ("最新".equals(tag)) { qTag = "热门"; qSort = "time"; }       // 剧集没有最新标签，按时间排序
+        } else {
+            if ("国产".equals(tag)) qTag = "华语";
+        }
+
         String url = "https://movie.douban.com/j/search_subjects?type=" + enc(type)
-                + "&tag=" + enc(tag) + "&sort=" + enc(sort)
+                + "&tag=" + enc(qTag) + "&sort=" + enc(qSort)
                 + "&page_limit=" + limit + "&page_start=" + start;
         try {
             Map<String, String> headers = new HashMap<String, String>();
