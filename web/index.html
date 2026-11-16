@@ -1256,6 +1256,7 @@ async function loadHome() {
   const request = ++homeRequest;
   const site = curSite;
   statusLoad(); $('grid').innerHTML = ''; $('tabs').innerHTML = '';
+  $('status').onclick = null;
   $('tabs').dataset.loaded = '1';
   $('vodTitle').textContent = '点播';
   try {
@@ -1277,8 +1278,19 @@ async function loadHome() {
     homeList = j.list || [];
     renderGrid($('grid'), homeList);
     statusDone(homeList.length ? '' : (j.msg || '暂无内容'));
+    if (!homeList.length) { // 空结果（常见于 JS 源初始化超时）→ 允许点状态栏重试
+      $('tabs').dataset.loaded = '0';
+      $('status').textContent = (j.msg || '暂无内容') + '（点此重试）';
+      $('status').onclick = () => loadHome();
+    }
     if ((j.types || []).length) loadCategory(j.types[0].id, true);
-  } catch (e) { if (request !== homeRequest || e.name === 'AbortError') return; markSiteFail(site, true); statusDone('加载失败: ' + e.message); }
+  } catch (e) {
+    if (request !== homeRequest || e.name === 'AbortError') return;
+    markSiteFail(site, true);
+    $('tabs').dataset.loaded = '0';
+    statusDone('加载失败: ' + e.message + '（点此重试）');
+    $('status').onclick = () => loadHome();
+  }
 }
 
 let curTid = '', curPage = 1, curPageCount = 0;
@@ -1321,7 +1333,7 @@ async function loadMore() {
     if (!list.length) curPageCount = curPage; // 源返回空页 → 到底了，别再翻
     renderGrid($('grid'), list, true);
     autoFillFeed();
-  } catch (e) { if (e.name !== 'AbortError') toast(e.message); }
+  } catch (e) { if (e.name !== 'AbortError') { toast(e.message); if (request === curPage && site === curSite && tid === curTid) curPage--; } }
   finally { moreLoading = false; if (end) end.classList.remove('loading'); }
 }
 
@@ -1543,30 +1555,32 @@ async function doSearchPage() {
   } catch (e) { $('searchStatus').textContent = '搜索失败: ' + e.message; }
 }
 async function pollSearch() {
-  if (!searchState) return;
+  const st = searchState;
+  if (!st) return;
   try {
-    const j = await api('searchpoll', { id: searchState.id, from: searchState.from });
-    searchState.from = j.total;
-    (j.groups || []).forEach(g => searchState.groups.set(g.siteName, g.list));
+    const j = await api('searchpoll', { id: st.id, from: st.from });
+    if (searchState !== st) return; // 期间开了新一轮搜索 → 丢弃旧会话的数据
+    st.from = j.total;
+    (j.groups || []).forEach(g => st.groups.set(g.siteName, g.list));
     // 只在数据有变化时重绘；搜索中最多每 2 秒重绘一次（避免每秒重绘/动画重播导致闪烁）
-    const fp = String(j.total || 0) + '|' + [...searchState.groups].map(([s, l]) => s + ':' + (l ? l.length : 0)).join(',');
+    const fp = String(j.total || 0) + '|' + [...st.groups].map(([s, l]) => s + ':' + (l ? l.length : 0)).join(',');
     const now = Date.now();
-    if (fp !== searchState.fp && (j.done || now - (searchState.lastRenderAt || 0) >= 2000)) {
-      searchState.fp = fp;
-      searchState.lastRenderAt = now;
+    if (fp !== st.fp && (j.done || now - (st.lastRenderAt || 0) >= 2000)) {
+      st.fp = fp;
+      st.lastRenderAt = now;
       renderSearchChips();
       renderSearchResult();
     }
     if (j.done) {
       clearInterval(searchPollTimer); searchPollTimer = null;
       let anyRes = false;
-      searchState.groups.forEach(l => { if (l && l.length) anyRes = true; });
+      st.groups.forEach(l => { if (l && l.length) anyRes = true; });
       if (!anyRes) {
         // 完整标题（如"斗破苍穹 特别篇3"）搜不到 → 自动用去后缀的基名重搜一次
-        const base = baseTitle(searchState.wd || '');
-        if (base && base !== String(searchState.wd || '').trim() && !searchState.fallbackTried) {
-          searchState.fallbackTried = true;
-          toast('未找到"' + searchState.wd + '"，已自动搜索"' + base + '"');
+        const base = baseTitle(st.wd || '');
+        if (base && base !== String(st.wd || '').trim() && !st.fallbackTried) {
+          st.fallbackTried = true;
+          toast('未找到"' + st.wd + '"，已自动搜索"' + base + '"');
           $('sInput').value = base;
           doSearchPage();
           return;
@@ -1693,7 +1707,9 @@ function marqueeDur(sp) {
 }
 
 // ---------- 详情 ----------
+let detailRequest = 0;
 async function openDetail(id, name, siteKey) {
+  const req = ++detailRequest;
   const page = $('detailPage');
   page.classList.add('show'); page.scrollTop = 0;
   const site = siteKey || curSite;
@@ -1713,6 +1729,7 @@ async function openDetail(id, name, siteKey) {
   $('dKeepBtn').dataset.site = site;
   try {
     const j = await api('detail', { site, id });
+    if (req !== detailRequest) return; // 期间点了别的片/已返回 → 丢弃旧详情
     curVod = j; curVod.siteKey = site;
     if (!curVod.id) curVod.id = id;   // 引擎/蜘蛛没带 id（网盘目录源）→ 用请求 id 兜底，否则播放进度保存会被守卫丢掉
     const rememberedFlag = getRememberedLine(site, curVod.id || id); // 上次用的线路（有就默认选中）
@@ -1749,6 +1766,7 @@ async function openDetail(id, name, siteKey) {
     $('dDesc').textContent = (j.desc || j.content || '').replace(/<[^>]+>/g, '');
     try {
       const keeps = await api('keep');
+      if (req !== detailRequest) return;
       const hit = (keeps.list || []).some(k => k.key === $('dKeepBtn').dataset.key);
       $('dKeepBtn').textContent = hit ? '★ 已收藏' : '☆ 收藏';
     } catch (e) {}
@@ -1807,6 +1825,7 @@ async function openDetail(id, name, siteKey) {
     // 任意入口打开详情：从服务端历史带出上次的线路/集号/进度（点播放时从此继续，手机看过的电脑也续得上）
     if (!resumed && !pendingResume) {
       api('history').then(hj => {
+        if (req !== detailRequest) return; // 期间换了片 → 不再套用旧记录
         try {
           const all = (hj && hj.list) || [];
           let rec = all.find(x => (x.key || '') === (site + '@' + id));
@@ -1844,7 +1863,7 @@ async function openDetail(id, name, siteKey) {
         } catch (e) {}
       }).catch(() => {});
     }
-  } catch (e) { $('dMeta').textContent = '加载失败: ' + e.message; }
+  } catch (e) { if (req === detailRequest) $('dMeta').textContent = '加载失败: ' + e.message; }
 }
 function renderEps(flag, vod) {
   const box = $('dEps'); box.innerHTML = '';
@@ -2007,7 +2026,7 @@ function toggleEpOrder() {
   const f = (curVod.flags || []).find(x => activeTab && x.flag === activeTab.textContent) || (curVod.flags || [])[0];
   if (f) renderEps(f, curVod);
 }
-function closeDetail() { stopPreview(); $('detailPage').classList.remove('show'); }
+function closeDetail() { detailRequest++; pendingResume = null; stopPreview(); $('detailPage').classList.remove('show'); }
 
 async function toggleKeep() {
   const btn = $('dKeepBtn');
@@ -2526,6 +2545,7 @@ async function loadDiscover(force) {
   discoverHasMore = false;
   try {
     const j = await api('discover', { type: discoverType, tag: discoverTag, sort: discoverSort(discoverTag), start: 0, limit: 30 });
+    if (grid.dataset.key !== key) return; // 期间切了类型/标签 → 丢弃旧结果
     if (j.error) { grid.innerHTML = '<div class="dim" style="padding:12px">' + esc(j.error) + '</div>'; return; }
     const list = j.list || [];
     if (!list.length) { grid.innerHTML = '<div class="dim" style="padding:12px">暂无数据</div>'; return; }
@@ -2535,7 +2555,7 @@ async function loadDiscover(force) {
     discoverHasMore = list.length >= 30;
     autoFillFeed();
   } catch (e) {
-    grid.innerHTML = '<div class="dim" style="padding:12px">加载失败：' + esc(e.message) + '</div>';
+    if (grid.dataset.key === key) grid.innerHTML = '<div class="dim" style="padding:12px">加载失败：' + esc(e.message) + '</div>';
   }
 }
 function discoverCard(v) {
@@ -4082,7 +4102,7 @@ async function panKeyPull() {
   } catch (e) { toast('拉取失败: ' + (e && e.message ? e.message : e)); }
 }
 // ---- 页面版本自检：引擎比页面新时才提示刷新（可点✕关闭/30秒自动收起，点击刷新不打断播放） ----
-const PAGE_VER = '1.0.58';
+const PAGE_VER = '1.0.59';
 let verTipShown = false;
 function verNewer(a, b) { // 语义化比较：a 是否比 b 新
   const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);
