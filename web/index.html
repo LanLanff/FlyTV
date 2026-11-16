@@ -244,6 +244,8 @@
 
   .status { color: var(--text2); padding: 40px; text-align: center; font-size: 14px; }
   .loadmore { display: block; margin: 28px auto 0; }
+  .feed-end { height: 1px; }
+  .feed-end.loading::after { content: '加载中…'; display: block; text-align: center; color: var(--text3); font-size: 12px; padding: 18px 0 4px; }
 
   /* ===== 搜索页 ===== */
   .search-hero { max-width: 720px; margin: 8vh auto 0; text-align: center; }
@@ -591,6 +593,7 @@ border: 1px solid var(--stroke); flex: none; position: relative; box-shadow: var
         <div class="tabs" id="tabs"></div>
         <div class="grid" id="grid"></div>
         <div class="status" id="status">加载中…</div>
+        <div class="feed-end" id="vodEnd"></div>
       </div>
 
       <!-- 搜索（独立页 + 联想） -->
@@ -603,6 +606,7 @@ border: 1px solid var(--stroke); flex: none; position: relative; box-shadow: var
           <span class="dim small" style="margin-left:auto">数据来自豆瓣 · 点海报直接全站搜索</span>
         </div>
         <div class="grid" id="discoverGrid"></div>
+        <div class="feed-end" id="discoverEnd"></div>
       </div>
 
       <div class="panel" id="panelSearch">
@@ -1149,6 +1153,39 @@ function openPanel(name) {
 }
 document.querySelectorAll('.nav-item').forEach(item => { item.onclick = () => openPanel(item.dataset.panel); });
 
+// ---------- 滑到底自动加载（发现 / 点播） ----------
+function initFeedObserver() {
+  const root = $('content');
+  if (!root || typeof IntersectionObserver === 'undefined') return;
+  const io = new IntersectionObserver(entries => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      if (e.target.id === 'discoverEnd') {
+        if (curPanel === 'discover' && discoverHasMore && !discoverLoading) loadDiscoverMore();
+      } else if (e.target.id === 'vodEnd') {
+        if (curPanel === 'vod' && curPage < curPageCount && !moreLoading) loadMore();
+      }
+    }
+  }, { root, rootMargin: '600px 0px' });
+  const d = $('discoverEnd'); if (d) io.observe(d);
+  const v = $('vodEnd'); if (v) io.observe(v);
+}
+// 列表很短、哨兵一直在视野里时，观察器不会再触发 → 主动补一页
+function autoFillFeed() {
+  setTimeout(() => {
+    const c = $('content'); if (!c) return;
+    const bottom = c.getBoundingClientRect().bottom + 600;
+    if (curPanel === 'discover' && discoverHasMore && !discoverLoading) {
+      const end = $('discoverEnd');
+      if (end && end.getBoundingClientRect().top < bottom) loadDiscoverMore();
+    } else if (curPanel === 'vod' && curPage < curPageCount && !moreLoading) {
+      const end = $('vodEnd');
+      if (end && end.getBoundingClientRect().top < bottom) loadMore();
+    }
+  }, 350);
+}
+initFeedObserver();
+
 // ---------- 站点（自定义下拉） ----------
 let allSites = [];
 async function initSites() {
@@ -1220,7 +1257,6 @@ async function loadHome() {
   const site = curSite;
   statusLoad(); $('grid').innerHTML = ''; $('tabs').innerHTML = '';
   $('tabs').dataset.loaded = '1';
-  removeMore();
   $('vodTitle').textContent = '点播';
   try {
     const j = await api('home', { site });
@@ -1246,14 +1282,13 @@ async function loadHome() {
 }
 
 let curTid = '', curPage = 1, curPageCount = 0;
-let catRequest = 0;
+let catRequest = 0, moreLoading = false;
 async function loadCategory(tid, silent) {
   const request = ++catRequest;
   const site = curSite;
   curTid = tid; curPage = 1; curPageCount = 0;
   if (!silent) gridSkeleton();
   statusLoad();
-  removeMore();
   try {
     const j = await api('category', { site, tid, pg: 1 });
     if (request !== catRequest || site !== curSite || tid !== curTid) return; // 期间切了站点/分类 → 丢弃这次结果
@@ -1265,8 +1300,8 @@ async function loadCategory(tid, silent) {
     } else {
       renderGrid($('grid'), list);
       statusDone('');
-      if (curPageCount > 1) addMore();
     }
+    autoFillFeed();
   } catch (e) {
     if (request !== catRequest || e.name === 'AbortError') return;
     if (homeList.length) { renderGrid($('grid'), homeList); statusDone('分类加载失败，显示首页推荐'); }
@@ -1274,23 +1309,21 @@ async function loadCategory(tid, silent) {
   }
 }
 async function loadMore() {
-  if (curPage >= curPageCount) return;
+  if (moreLoading || curPage >= curPageCount) return;
+  moreLoading = true;
+  const end = $('vodEnd'); if (end) end.classList.add('loading');
   curPage++;
   const request = curPage, site = curSite, tid = curTid;
   try {
     const j = await api('category', { site, tid, pg: request });
-    if (request !== curPage || site !== curSite || tid !== curTid) return; // 已经切站/切分类/重复点击 → 丢弃
-    renderGrid($('grid'), j.list || [], true);
-    if (curPage >= curPageCount) removeMore();
+    if (request !== curPage || site !== curSite || tid !== curTid) return; // 已经切站/切分类/重复触发 → 丢弃
+    const list = j.list || [];
+    if (!list.length) curPageCount = curPage; // 源返回空页 → 到底了，别再翻
+    renderGrid($('grid'), list, true);
+    autoFillFeed();
   } catch (e) { if (e.name !== 'AbortError') toast(e.message); }
+  finally { moreLoading = false; if (end) end.classList.remove('loading'); }
 }
-function addMore() {
-  removeMore();
-  const b = document.createElement('button');
-  b.id = 'moreBtn'; b.className = 'btn ghost loadmore'; b.textContent = '加载更多'; b.onclick = loadMore;
-  $('content').appendChild(b);
-}
-function removeMore() { const b = $('moreBtn'); if (b) b.remove(); }
 
 // 快速搜索（顶栏）→ 跳搜索页
 function quickSearch() {
@@ -2453,6 +2486,7 @@ async function runDiagnose() {
 // ---- 发现页（豆瓣）----
 let discoverType = 'movie';
 let discoverTag = '热门';
+let discoverStart = 0, discoverLoading = false, discoverHasMore = false;
 // 标签栏固定一套，切电影/剧集时原样不动；后端按类型把标签对应到豆瓣可用标签
 const DISCOVER_TAGS = ['热门', '最新', '豆瓣高分', '国产', '欧美', '韩国', '日本', '综艺', '纪录片'];
 function discoverSort(tag) { if (tag === '最新') return 'time'; if (tag === '豆瓣高分') return 'rank'; return 'recommend'; }
@@ -2489,23 +2523,51 @@ async function loadDiscover(force) {
   if (!force && grid.dataset.key === key && grid.children.length) return;
   grid.dataset.key = key;
   grid.innerHTML = '<div class="dim" style="padding:12px">加载中…</div>';
+  discoverHasMore = false;
   try {
     const j = await api('discover', { type: discoverType, tag: discoverTag, sort: discoverSort(discoverTag), start: 0, limit: 30 });
     if (j.error) { grid.innerHTML = '<div class="dim" style="padding:12px">' + esc(j.error) + '</div>'; return; }
     const list = j.list || [];
     if (!list.length) { grid.innerHTML = '<div class="dim" style="padding:12px">暂无数据</div>'; return; }
     grid.innerHTML = '';
-    list.forEach(v => {
-      const c = document.createElement('div');
-      c.className = 'card';
-      c.innerHTML = '<div class="pic"><div class="ph">🎬</div>' + (v.pic ? '<img loading="lazy" decoding="async" src="' + pic(v.pic) + '" onerror="imgRetry(this)">' : '') +
-        (v.rate ? '<div class="badge rate">★ ' + esc(v.rate) + '</div>' : '') +
-        '<div class="shade"><div class="ttl">' + esc(v.title) + '</div></div></div>';
-      c.onclick = () => searchFromDiscover(v.title);
-      grid.appendChild(c);
-    });
+    list.forEach(v => grid.appendChild(discoverCard(v)));
+    discoverStart = list.length;
+    discoverHasMore = list.length >= 30;
+    autoFillFeed();
   } catch (e) {
     grid.innerHTML = '<div class="dim" style="padding:12px">加载失败：' + esc(e.message) + '</div>';
+  }
+}
+function discoverCard(v) {
+  const c = document.createElement('div');
+  c.className = 'card';
+  c.innerHTML = '<div class="pic"><div class="ph">🎬</div>' + (v.pic ? '<img loading="lazy" decoding="async" src="' + pic(v.pic) + '" onerror="imgRetry(this)">' : '') +
+    (v.rate ? '<div class="badge rate">★ ' + esc(v.rate) + '</div>' : '') +
+    '<div class="shade"><div class="ttl">' + esc(v.title) + '</div></div></div>';
+  c.onclick = () => searchFromDiscover(v.title);
+  return c;
+}
+async function loadDiscoverMore() {
+  const grid = $('discoverGrid'), end = $('discoverEnd');
+  if (!grid || discoverLoading || !discoverHasMore) return;
+  discoverLoading = true;
+  if (end) end.classList.add('loading');
+  const key = discoverType + '|' + discoverTag;
+  const start = discoverStart;
+  try {
+    const j = await api('discover', { type: discoverType, tag: discoverTag, sort: discoverSort(discoverTag), start, limit: 30 });
+    if (grid.dataset.key !== key) return; // 期间切了类型/标签 → 丢弃
+    if (j.error) { toast(j.error); return; }
+    const list = j.list || [];
+    list.forEach(v => grid.appendChild(discoverCard(v)));
+    discoverStart = start + list.length;
+    if (list.length < 30) discoverHasMore = false; // 到底了
+    autoFillFeed();
+  } catch (e) {
+    toast('加载失败: ' + e.message);
+  } finally {
+    discoverLoading = false;
+    if (end) end.classList.remove('loading');
   }
 }
 function searchFromDiscover(title) {
