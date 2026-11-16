@@ -205,15 +205,21 @@ public final class VodConfig {
             }
         }
         String first = "";
-        try {
-            first = Setting.configVod();
-            if (first != null && !first.isEmpty()) {
-                load(first);
-                Logger.d("VodConfig", "启动配置已加载: " + first);
-                return;
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            try {
+                first = Setting.configVod();
+                if (first != null && !first.isEmpty()) {
+                    load(first);
+                    Logger.d("VodConfig", "启动配置已加载: " + first);
+                    return;
+                }
+                break;
+            } catch (Exception e) {
+                Logger.e("VodConfig", "启动配置加载失败(第" + attempt + "次)(" + first + "): " + e.getMessage());
+                if (attempt == 1) {
+                    try { Thread.sleep(1500); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                }
             }
-        } catch (Exception e) {
-            Logger.e("VodConfig", "启动配置加载失败(" + (first == null ? "" : first) + "): " + e.getMessage());
         }
         try {
             for (JsonObject c : Stores.getConfigs(0)) {
@@ -221,8 +227,8 @@ public final class VodConfig {
                 if (u.isEmpty() || u.equals(first)) continue;
                 try {
                     load(u);
-                    Setting.setConfigVod(u); // 记住可用的那份，下次启动直接命中
-                    Logger.d("VodConfig", "已自动切换到可用配置: " + u + " → " + visibleSiteCount() + " 站点");
+                    // 只本次会话临时回退，绝不改写用户选择的配置（避免一次网络抖动把配置永久换掉）
+                    Logger.d("VodConfig", "启动配置暂不可用，本次临时使用: " + u + " → " + visibleSiteCount() + " 站点");
                     return;
                 } catch (Exception e2) {
                     Logger.e("VodConfig", "配置不可用(" + u + "): " + e2.getMessage());
