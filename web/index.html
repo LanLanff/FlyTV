@@ -871,7 +871,7 @@ border: 1px solid var(--stroke); flex: none; position: relative; box-shadow: var
               </span>
             </div>
             <div class="srow">
-              <span class="k">自动同步（历史/收藏）</span>
+              <span class="k">自动同步（历史/收藏/配置/网盘Key）</span>
               <span class="v" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
                 <label style="cursor:pointer;display:flex;gap:6px;align-items:center">
                   <input type="checkbox" id="syncAuto" onchange="saveSyncCfg()"> 开启，每
@@ -902,7 +902,7 @@ border: 1px solid var(--stroke); flex: none; position: relative; box-shadow: var
               </span>
             </div>
             <div class="srow"><span class="k">状态</span><span class="v" id="syncStatus">-</span></div>
-            <div class="dim small">新方式：复制 flytv:// 链接粘贴到其它设备即可同步（链接自带加密密钥，无需再填口令）。内容：点播配置 + 网盘登录（夸克/UC/百度/阿里）+ 引擎设置 + 历史 + 收藏。上传前 AES-256 加密（云端只存密文）；下载会覆盖本机配置与登录（自动备份 .bak），历史/收藏按时间合并。</div>
+            <div class="dim small">flytv:// 链接自带加密密钥，粘贴到其它设备即可同步。自动同步内容：历史 + 收藏 + 配置列表 + 网盘 Key。下载只合并配置列表，不改本机当前配置与同步链接（配置/设置自动备份 .bak）；历史/收藏按进度与时间合并。上传前 AES-256 加密，云端只存密文。</div>
           </div>
 
           <div class="scard">
@@ -2305,6 +2305,7 @@ async function loadSyncStatus() {
     $('syncStatus').textContent = parts.join(' · ');
   } catch (e) { const el = $('syncStatus'); if (el) el.textContent = '读取失败'; }
 }
+
 async function syncSaveCfg() {
   const input = ($('syncLink') && $('syncLink').value || '').trim();
   const url = input || window._syncUrl || '';
@@ -4102,7 +4103,7 @@ async function panKeyPull() {
   } catch (e) { toast('拉取失败: ' + (e && e.message ? e.message : e)); }
 }
 // ---- 页面版本自检：引擎比页面新时才提示刷新（可点✕关闭/30秒自动收起，点击刷新不打断播放） ----
-const PAGE_VER = '1.0.59';
+const PAGE_VER = '1.0.60';
 let verTipShown = false;
 function verNewer(a, b) { // 语义化比较：a 是否比 b 新
   const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);
