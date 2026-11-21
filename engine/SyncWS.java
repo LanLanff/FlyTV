@@ -20,6 +20,7 @@ public final class SyncWS {
     private static volatile boolean alive = false;
     private static volatile boolean started = false;
     private static volatile long changedCount = 0;
+    private static volatile long lastTrigger = 0;
 
     public static boolean isAlive() { return alive; }
     public static long changes() { return changedCount; }
@@ -79,13 +80,27 @@ public final class SyncWS {
                         @Override
                         public void onMessage(WebSocket webSocket, String text) {
                             try {
-                                if (text != null && text.contains("\"type\":\"changed\"")) {
-                                    changedCount++;
-                                    Logger.d("SyncWS", "收到变更通知 #" + changedCount + "，立即同步");
-                                    new Thread(() -> {
-                                        try { Sync.autoSync(false); } catch (Throwable ignored) { }
-                                    }, "ws-sync").start();
+                                Sync.lastNotifyAt = System.currentTimeMillis();
+                                if (text == null || !text.contains("\"type\":\"changed\"")) return;
+                                // 忽略自己刚写入引起的通知：消息里带 rev 且与本地一致时直接跳过
+                                java.util.regex.Matcher rm = java.util.regex.Pattern.compile("\"rev\"\\s*:\\s*\"([^\"]+)\"").matcher(text);
+                                if (rm.find()) {
+                                    try {
+                                        String hurl = Sync.historyUrl(Sync.authUrl(Setting.getString("sync_url", ""), Setting.getString("sync_pass", "")));
+                                        String mine = Sync.REVS.get(Sync.revKey(hurl));
+                                        if (mine != null && mine.equals(rm.group(1))) return;
+                                    } catch (Exception ignored) { }
                                 }
+                                long now = System.currentTimeMillis();
+                                // 通知风暴保护：上一轮没拉到/推过东西就放慢到 12 秒，避免 2Hz 循环
+                                long gap = (Sync.lastPulled || Sync.lastPushed) ? 2000 : 12000;
+                                if (now - lastTrigger < gap) return;
+                                lastTrigger = now;
+                                changedCount++;
+                                Logger.d("SyncWS", "收到变更通知 #" + changedCount + "，立即同步");
+                                new Thread(() -> {
+                                    try { Sync.autoSync(false); } catch (Throwable ignored) { }
+                                }, "ws-sync").start();
                             } catch (Throwable ignored) {
                             }
                         }
