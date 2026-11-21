@@ -7,11 +7,11 @@
     "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.60/FlyTV-1.0.60-win.zip"
   },
   "apk": {
-    "versionCode": 44,
-    "versionName": "1.0.44",
-    "size": 26809490,
-    "md5": "6c09aa04095a925fa2de356714db3877",
-    "notes": "修复连接蓝牙（遥控/键盘/耳机）会退出或停止当前播放：页面不再因键盘/导航配置变化被重建；蓝牙连接导致的临时音频焦点丢失改为暂停后自动续播。",
-    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.60/FlyTV-1.0.44-android-arm64.apk"
+    "versionCode": 45,
+    "versionName": "1.0.45",
+    "size": 26810604,
+    "md5": "5ab9c97c257e358353956abfc77174d7",
+    "notes": "修复连接蓝牙（遥控/键盘/耳机）会退出或停止当前播放；更新检查改为多镜像回退，国内网络也能检查更新。",
+    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.60/FlyTV-1.0.45-android-arm64.apk"
   }
 }
