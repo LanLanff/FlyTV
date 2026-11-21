@@ -34,6 +34,14 @@ public final class Sync {
     private static final String[] COOKIE_FILES = {"quark_cookie.txt", "uc_cookie.txt", "baidu_cookie.txt", "ali_cookie.txt"};
     private static final int MAX_BLOB = 8 * 1024 * 1024;
 
+    /** 每个同步文件的最近一次版本/状态（用于详情页）。 */
+    static final java.util.Map<String, String> REVS = new java.util.concurrent.ConcurrentHashMap<>();
+    static final java.util.Map<String, JsonObject> LINK_STATE = new java.util.concurrent.ConcurrentHashMap<>();
+    static volatile long lastNotifyAt = 0, lastSyncAt = 0;
+    static volatile String lastSyncError = "";
+    static volatile long lastSyncMs = 0;
+    static volatile boolean lastPulled = false, lastPushed = false;
+
     // ---------- 对外接口 ----------
 
     public static JsonObject status() {
@@ -78,7 +86,118 @@ public final class Sync {
         return o;
     }
 
-    /** 解析同步输入：支持 ①URL?key=xxx ②flytv://<AES加密分享码> ③flytv://<base64 JSON 旧版>。返回 [url, key]。 */
+    /** 同步详情：每条同步链接的云端状态（大小/版本/时间）+ 本机游标 + WS 状态。 */
+    public static JsonObject info(boolean refresh) {
+        JsonObject o = new JsonObject();
+        String url = Setting.getString("sync_url", "");
+        String pass = Setting.getString("sync_pass", "");
+        o.addProperty("url", url);
+        o.addProperty("hasPass", !pass.isEmpty());
+        o.addProperty("auto", Setting.getBool("sync_auto", true));
+        o.addProperty("interval", Setting.getInt("sync_interval", 1));
+        o.addProperty("lastUp", Setting.getString("sync_last_up", ""));
+        o.addProperty("lastDown", Setting.getString("sync_last_down", ""));
+
+        JsonObject ws = new JsonObject();
+        ws.addProperty("alive", SyncWS.isAlive());
+        ws.addProperty("changes", SyncWS.changes());
+        ws.addProperty("lastNotifyAt", lastNotifyAt);
+        ws.addProperty("lastSyncAt", lastSyncAt);
+        ws.addProperty("lastSyncMs", lastSyncMs);
+        ws.addProperty("pulled", lastPulled);
+        ws.addProperty("pushed", lastPushed);
+        ws.addProperty("error", lastSyncError == null ? "" : lastSyncError);
+        o.add("ws", ws);
+
+        JsonObject local = new JsonObject();
+        local.addProperty("history", Stores.histories().size());
+        local.addProperty("keep", Stores.keeps().size());
+        local.addProperty("configs", Stores.configs().size());
+        o.add("local", local);
+
+        JsonArray links = new JsonArray();
+        if (!url.isEmpty() && !pass.isEmpty()) {
+            String auth = authUrl(url, pass);
+            links.add(linkInfo("main", "完整备份（配置/设置/历史/收藏/网盘Key）", auth, refresh));
+            links.add(linkInfo("history", "自动同步（历史/收藏/配置链接）", historyUrl(auth), refresh));
+            links.add(linkInfo("pan", "网盘 Key", panUrl(auth), refresh));
+        }
+        o.add("links", links);
+        return o;
+    }
+
+    private static JsonObject linkInfo(String key, String label, String url, boolean refresh) {
+        JsonObject o = null;
+        if (refresh) {
+            o = probe(url);
+            JsonObject cached = LINK_STATE.get(revKey(url));
+            if (cached != null && JsonUtil.lng(o, "size", 0) <= 0) o.addProperty("size", JsonUtil.lng(cached, "size", 0));
+        } else {
+            JsonObject cached = LINK_STATE.get(revKey(url));
+            if (cached != null) o = cached.deepCopy();
+        }
+        if (o == null) {
+            o = new JsonObject();
+            o.addProperty("state", "unknown");
+        }
+        o.addProperty("key", key);
+        o.addProperty("label", label);
+        o.addProperty("url", url);
+        return o;
+    }
+
+    /** 记录一次读写的结果，详情页直接展示（不额外发请求）。 */
+    static void recordState(String url, int code, long size, String rev, String modified) {
+        try {
+            JsonObject o = new JsonObject();
+            o.addProperty("http", code);
+            o.addProperty("state", (code >= 200 && code < 300) ? "ok" : (code == 404 ? "missing" : "error"));
+            o.addProperty("size", size);
+            o.addProperty("rev", rev == null ? "" : rev);
+            o.addProperty("modified", modified == null ? "" : modified);
+            o.addProperty("at", System.currentTimeMillis());
+            LINK_STATE.put(revKey(url), o);
+        } catch (Exception ignored) { }
+    }
+
+    /** HEAD 探测单个同步文件（服务端不支持 HEAD 时退回 GET 只读响应头）。 */
+    private static JsonObject probe(String url) {
+        JsonObject o = new JsonObject();
+        HttpURLConnection c = null;
+        try {
+            c = open(url, "HEAD");
+            int code = c.getResponseCode();
+            if (code == 405 || code == 501) {
+                c.disconnect();
+                c = open(url, "GET");
+                code = c.getResponseCode();
+            }
+            o.addProperty("http", code);
+            o.addProperty("state", (code >= 200 && code < 300) ? "ok" : (code == 404 ? "missing" : "error"));
+            long len = c.getContentLengthLong();
+            o.addProperty("size", len > 0 ? len : 0);
+            String rev = c.getHeaderField("X-Rev");
+            o.addProperty("rev", rev == null ? "" : rev);
+            String lm = c.getHeaderField("Last-Modified");
+            o.addProperty("modified", lm == null ? "" : lm);
+            o.addProperty("at", System.currentTimeMillis());
+        } catch (Exception e) {
+            o.addProperty("state", "error");
+            o.addProperty("error", e.getMessage() == null ? "连接失败" : e.getMessage());
+        } finally {
+            if (c != null) try { c.disconnect(); } catch (Exception ignored) { }
+        }
+        return o;
+    }
+
+    public static String infoJson() {
+        try { return info(false).toString(); } catch (Exception e) { return errJson(e); }
+    }
+
+    public static String infoJson(boolean refresh) {
+        try { return info(refresh).toString(); } catch (Exception e) { return errJson(e); }
+    }
+
     static String[] parseLink(String input) {
         if (input == null) return null;
         String s = input.trim();
@@ -137,7 +256,12 @@ public final class Sync {
     public static String saveJson4(String url, String pass, String auto, String interval) { return save(url, pass, auto, interval).toString(); }
 
     public static String autoJson() {
-        try { return autoSync().toString(); } catch (Exception e) { return errJson(e); }
+        try { return autoSync().toString(); }
+        catch (Exception e) {
+            lastSyncError = e.getMessage() == null ? "同步失败" : e.getMessage();
+            lastSyncAt = System.currentTimeMillis();
+            return errJson(e);
+        }
     }
 
     public static String uploadJson() {
@@ -249,26 +373,32 @@ public final class Sync {
         JsonObject files = bundle == null ? null : bundle.getAsJsonObject("files");
         if (files == null) throw new Exception("云端文件格式不对（或口令错误）");
         int applied = 0;
-        // 1. 配置类：覆盖 + .bak 备份
+        // 1. 配置类：配置链接按 url 合并（不覆盖本机、不改当前选中），prefs 只应用通用设置
         for (String name : new String[]{"configs.json", "prefs.json"}) {
             if (!files.has(name)) continue;
             backup(name);
             if ("prefs.json".equals(name)) {
                 applyPrefs(files.get(name).getAsString());
             } else {
-                writeFile(new File(AppPaths.Root, name), files.get(name).getAsString());
+                if (mergeConfigsText(files.get(name).getAsString())) Stores.clearCache();
             }
             applied++;
         }
-        // 2. 历史：按 key 合并（createTime 新的胜出）
+        // 1.1 云端已删除的配置：本机也删掉
+        if (files.has("config-deleted.json")) {
+            if (mergeTombstonesText(files.get("config-deleted.json").getAsString())) Stores.clearCache();
+        }
         if (files.has("history.json")) {
             JsonArray arr = JsonUtil.parseArr(files.get("history.json").getAsString());
+            long deadline = System.currentTimeMillis() - Stores.HISTORY_TIME;
             if (arr != null) for (JsonElement e : arr) {
                 try {
                     if (!e.isJsonObject()) continue;
                     JsonObject t = e.getAsJsonObject();
                     String key = JsonUtil.str(t, "key", "");
                     if (key.isEmpty()) continue;
+                    long ct = JsonUtil.lng(t, "createTime", 0);
+                    if (ct > 0 && ct < deadline) continue; // 超保留期的旧记录不再导入
                     int cid = JsonUtil.integer(t, "cid", Api.currentCid());
                     JsonObject mine = Stores.findHistory(cid, key);
                     if (mergeShouldApply(t, mine)) {
@@ -389,20 +519,44 @@ public final class Sync {
     static void mergeHistoryText(String text) {
         JsonArray arr = JsonUtil.parseArr(text);
         if (arr == null) return;
+        int applied = 0;
+        String first = "";
+        long deadline = System.currentTimeMillis() - Stores.HISTORY_TIME;
         for (JsonElement e : arr) {
             try {
                 if (!e.isJsonObject()) continue;
                 JsonObject t = e.getAsJsonObject();
                 String key = JsonUtil.str(t, "key", "");
                 if (key.isEmpty()) continue;
+                long ct = JsonUtil.lng(t, "createTime", 0);
+                if (ct > 0 && ct < deadline) continue; // 超过保留期（60天）的旧记录不再导入，避免每轮反复写入
                 int cid = JsonUtil.integer(t, "cid", Api.currentCid());
                 JsonObject mine = Stores.findHistory(cid, key);
                 if (mergeShouldApply(t, mine)) {
                     t.addProperty("cid", cid);   // 统一补 cid：避免下次按 cid 找不到导致重复保存/两端互推
                     Stores.saveHistoryKeepTime(t);
+                    applied++;
+                    if (first.isEmpty()) first = key + "@" + cid;
                 }
             } catch (Exception ignored) { }
         }
+        if (applied > 0) Logger.d("Sync", "合并历史：应用 " + applied + " 条，首个 " + first);
+    }
+
+    /** 过滤掉超过保留期的历史记录（云端长期累积的旧数据不再回传）。 */
+    static JsonArray freshHistory(JsonArray arr) {
+        JsonArray out = new JsonArray();
+        if (arr == null) return out;
+        long deadline = System.currentTimeMillis() - Stores.HISTORY_TIME;
+        for (JsonElement e : arr) {
+            try {
+                if (!e.isJsonObject()) continue;
+                long ct = JsonUtil.lng(e.getAsJsonObject(), "createTime", 0);
+                if (ct > 0 && ct < deadline) continue;
+                out.add(e);
+            } catch (Exception ignored) { }
+        }
+        return out;
     }
 
     /** 合并收藏数组（key 去重）。 */
@@ -422,6 +576,82 @@ public final class Sync {
                 }
             } catch (Exception ignored) { }
         }
+    }
+
+    /**
+     * 合并配置列表（按 url+type 去重）：只补云端独有的，不覆盖本地条目，
+     * 也绝不改本机当前选中的配置（避免同步后配置被悄悄换掉）。
+     */
+    static boolean mergeConfigsText(String text) {
+        JsonArray arr = JsonUtil.parseArr(text);
+        if (arr == null || arr.size() == 0) return false;
+        boolean changed = false;
+        int maxId = 0;
+        for (JsonObject c : Stores.configs()) maxId = Math.max(maxId, JsonUtil.integer(c, "id", 0));
+        for (JsonElement e : arr) {
+            try {
+                if (!e.isJsonObject()) continue;
+                JsonObject c = e.getAsJsonObject();
+                String url = JsonUtil.str(c, "url", "");
+                if (url.isEmpty()) continue;
+                int type = JsonUtil.integer(c, "type", 0);
+                if (Stores.tombstoned(url, type, JsonUtil.lng(c, "time", 0))) continue; // 云端已删除的配置不再加回
+                boolean exists = false;
+                for (JsonObject x : Stores.configs()) {
+                    if (url.equals(JsonUtil.str(x, "url", "")) && JsonUtil.integer(x, "type", 0) == type) { exists = true; break; }
+                }
+                if (exists) continue;
+                JsonObject copy = c.deepCopy();
+                int id = JsonUtil.integer(copy, "id", 0);
+                boolean idTaken = false;
+                for (JsonObject x : Stores.configs()) if (JsonUtil.integer(x, "id", 0) == id) { idTaken = true; break; }
+                if (id <= 0 || idTaken) copy.addProperty("id", ++maxId);
+                else maxId = Math.max(maxId, id);
+                Stores.configs().add(copy);
+                changed = true;
+            } catch (Exception ignored) { }
+        }
+        if (changed) Stores.persistConfigs();
+        return changed;
+    }
+
+    /** 配置文件的轻量签名（大小 + 修改时间）。 */
+    static String configSig() {
+        try {
+            File f = new File(AppPaths.Root, "configs.json");
+            return f.exists() ? (f.length() + "@" + f.lastModified()) : "0";
+        } catch (Exception e) {
+            return "0";
+        }
+    }
+
+    /** 合并云端"已删除配置"标记，并删掉本机对应配置。 */
+    static boolean mergeTombstonesText(String text) {
+        JsonArray arr = JsonUtil.parseArr(text);
+        if (arr == null) return false;
+        for (JsonElement e : arr) {
+            try {
+                if (!e.isJsonObject()) continue;
+                JsonObject t = e.getAsJsonObject();
+                String url = JsonUtil.str(t, "url", "");
+                if (url.isEmpty()) continue;
+                Stores.addTombstone(url, JsonUtil.integer(t, "type", 0), JsonUtil.lng(t, "time", 0));
+            } catch (Exception ignored) { }
+        }
+        boolean changed = false;
+        try {
+            java.util.List<JsonObject> list = new java.util.ArrayList<>(Stores.configs());
+            for (JsonObject c : list) {
+                String url = JsonUtil.str(c, "url", "");
+                int type = JsonUtil.integer(c, "type", 0);
+                if (Stores.tombstoned(url, type, JsonUtil.lng(c, "time", 0))) {
+                    Stores.configs().remove(c);
+                    changed = true;
+                }
+            }
+            if (changed) Stores.persistConfigs();
+        } catch (Exception ignored) { }
+        return changed;
     }
 
     private static volatile long lastHistRev = -1, lastKeepRev = -1;
@@ -485,12 +715,22 @@ public final class Sync {
         String pass = Setting.getString("sync_pass", "");
         JsonObject o = new JsonObject();
         if (url.isEmpty() || pass.isEmpty()) { o.addProperty("skip", true); return o; }
+        // 防止通知风暴：同一轮同步至少间隔 2 秒
+        long now0 = System.currentTimeMillis();
+        if (!waitMode && lastSyncAt > 0 && now0 - lastSyncAt < 2000) {
+            o.addProperty("ok", true);
+            o.addProperty("throttled", true);
+            return o;
+        }
+        long t0 = now0;
         String hurl = historyUrl(authUrl(url, pass));
         String pullUrl = hurl;
-        if (waitMode && lastGetRev != null && !lastGetRev.isEmpty()) {
-            pullUrl = hurl + (hurl.contains("?") ? "&" : "?") + "wait=20&rev=" + java.net.URLEncoder.encode(lastGetRev, "UTF-8");
+        String rev = REVS.get(revKey(hurl));
+        if (waitMode && rev != null && !rev.isEmpty()) {
+            pullUrl = hurl + (hurl.contains("?") ? "&" : "?") + "wait=20&rev=" + java.net.URLEncoder.encode(rev, "UTF-8");
         }
         long histBefore = Stores.historyRevision(), keepBefore = Stores.keepRevision();
+        String cfgBefore = configSig();
         JsonArray cloudHist = null, cloudKeep = null;
         byte[] blob = get(pullUrl);
         if (blob != null) {
@@ -506,37 +746,120 @@ public final class Sync {
                     cloudKeep = JsonUtil.parseArr(files.get("keep.json").getAsString());
                     mergeKeepText(files.get("keep.json").getAsString());
                 }
+                // 配置链接：按 url+type 合并，只补云端独有的，不改本机当前配置
+                if (files.has("configs.json")) mergeConfigsText(files.get("configs.json").getAsString());
+                // 云端删掉的配置：本机也删掉
+                if (files.has("config-deleted.json")) mergeTombstonesText(files.get("config-deleted.json").getAsString());
             }
         }
-        boolean pulled = Stores.historyRevision() != histBefore || Stores.keepRevision() != keepBefore;
+        // 网盘 Key：顺带拉一次（token-pan），内容有变化才写入
+        applyCloudPan(panUrl(authUrl(url, pass)), pass);
+        boolean pulled = Stores.historyRevision() != histBefore || Stores.keepRevision() != keepBefore
+                || !cfgBefore.equals(configSig());
         long hr = Stores.historyRevision(), kr = Stores.keepRevision();
+        String cfgSig = configSig();
         boolean pushed = false;
-        if (pulled || histHealNeeded || hr != lastHistRev || kr != lastKeepRev) {
-            JsonObject files = new JsonObject();
-            // 并集上传：本地 + 本轮从云端拉到的全部记录（本地保留策略/老化清掉的老记录也带上），
-            // 保证云端文件只增不减，不会因为某台设备的本地精简而丢历史。
-            JsonArray hist = unionByKey(readArrayFile(new File(AppPaths.Root, "history.json")), cloudHist);
-            JsonArray keep = unionByKey(readArrayFile(new File(AppPaths.Root, "keep.json")), cloudKeep);
-            files.addProperty("history.json", hist.toString());
-            files.addProperty("keep.json", keep.toString());
-            JsonObject bundle = new JsonObject();
-            bundle.addProperty("app", "FlyTV");
-            bundle.addProperty("kind", "history");
-            bundle.addProperty("time", System.currentTimeMillis());
-            bundle.add("files", files);
-            byte[] data = encrypt(gzip(bundle.toString().getBytes(StandardCharsets.UTF_8)), pass);
-            int code = put(hurl, data);
-            if (code >= 200 && code < 300) {
-                pushed = true;
-                histHealNeeded = false;
+        if (pulled || histHealNeeded || hr != lastHistRev || kr != lastKeepRev || !cfgSig.equals(lastCfgSig)) {
+            String histText = unionByKey(readArrayFile(new File(AppPaths.Root, "history.json")), freshHistory(cloudHist)).toString();
+            String keepText = unionByKey(readArrayFile(new File(AppPaths.Root, "keep.json")), cloudKeep).toString();
+            String cfgText = readTextFile(new File(AppPaths.Root, "configs.json"));
+            String tombText = readTextFile(new File(AppPaths.Root, "config-deleted.json"));
+            // 内容没变就不写：避免"PUT → 服务端广播 changed → 再同步"的自我循环
+            String hash = sha256Hex(histText + "\n" + keepText + "\n" + cfgText + "\n" + tombText);
+            if (!hash.equals(lastPushedHash)) {
+                JsonObject files = new JsonObject();
+                files.addProperty("history.json", histText);
+                files.addProperty("keep.json", keepText);
+                if (!cfgText.isEmpty()) files.addProperty("configs.json", cfgText);
+                if (!tombText.isEmpty()) files.addProperty("config-deleted.json", tombText);
+                JsonObject bundle = new JsonObject();
+                bundle.addProperty("app", "FlyTV");
+                bundle.addProperty("kind", "history");
+                bundle.addProperty("time", System.currentTimeMillis());
+                bundle.add("files", files);
+                byte[] data = encrypt(gzip(bundle.toString().getBytes(StandardCharsets.UTF_8)), pass);
+                int code = put(hurl, data);
+                if (code >= 200 && code < 300) {
+                    pushed = true;
+                    histHealNeeded = false;
+                    lastHistRev = hr;
+                    lastKeepRev = kr;
+                    lastCfgSig = cfgSig;
+                    lastPushedHash = hash;
+                }
+            } else {
+                // 内容一致：只更新本地游标，不重复上传
                 lastHistRev = hr;
                 lastKeepRev = kr;
+                lastCfgSig = cfgSig;
             }
         }
+        lastSyncAt = System.currentTimeMillis();
+        lastSyncMs = lastSyncAt - t0;
+        lastPulled = pulled;
+        lastPushed = pushed;
+        lastSyncError = "";
         o.addProperty("ok", true);
         o.addProperty("pulled", pulled);
         o.addProperty("pushed", pushed);
+        o.addProperty("histChanged", Stores.historyRevision() != histBefore);
+        o.addProperty("keepChanged", Stores.keepRevision() != keepBefore);
+        o.addProperty("cfgChanged", !cfgBefore.equals(configSig()));
+        o.addProperty("histRev", hr);
+        o.addProperty("keepRev", kr);
+        o.addProperty("ms", lastSyncMs);
         return o;
+    }
+
+    /** 拉取并应用云端网盘 Key（token-pan）；内容与上次一致则跳过。 */
+    private static void applyCloudPan(String purl, String pass) {
+        try {
+            byte[] pb = get(purl);
+            if (pb == null || pb.length == 0) return;
+            JsonObject bundle = JsonUtil.parseObj(new String(gunzip(decrypt(pb, pass)), StandardCharsets.UTF_8));
+            JsonObject kv = bundle == null ? null : bundle.getAsJsonObject("keys");
+            if (kv == null || kv.size() == 0) return;
+            String hash = sha256Hex(kv.toString());
+            if (hash.equals(lastPanHash)) return;
+            int n = PanKeys.apply(kv);
+            lastPanHash = hash;
+            Logger.d("Sync", "网盘Key已从云端更新: " + n + " 项");
+        } catch (Exception e) {
+            Logger.d("Sync", "网盘Key拉取失败: " + e.getMessage());
+        }
+    }
+
+    static volatile String lastPanHash = "";
+    static volatile String lastCfgSig = "";
+    static volatile String lastPushedHash = "";
+
+    private static String readTextFile(File f) {
+        try {
+            return f.exists() ? new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8) : "";
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    static String sha256Hex(String s) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] b = md.digest(s.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (byte x : b) sb.append(String.format("%02x", x));
+            return sb.toString();
+        } catch (Exception e) {
+            return String.valueOf(s.hashCode());
+        }
+    }
+
+    /** 记录版本号时去掉 wait/rev 参数，保证同一文件用同一 key。 */
+    static String revKey(String url) {
+        try {
+            return url.replaceAll("[?&](wait|rev)=[^&]*", "").replaceAll("[?&]+$", "");
+        } catch (Exception e) {
+            return url;
+        }
     }
 
     /** 自动同步线程：按设置间隔（默认 2 分钟）拉取合并 + 有变化回传；15 秒粒度检查，改设置即时生效。 */
@@ -621,24 +944,32 @@ public final class Sync {
 
     // ---------- 内部实现 ----------
 
+    /** 只属于本机、不能跨设备覆盖的键（配置选择、同步凭据、设备标识）。 */
+    static final String[] LOCAL_ONLY_KEYS = {
+            "device_uuid", "sync_url", "sync_pass", "sync_last_up", "sync_last_down",
+            "sync_auto", "sync_interval", "config_vod", "config_live", "web_password", "local_server_lan"
+    };
+
     static String stripDeviceUuid(String prefsJson) {
         try {
             JsonObject o = JsonUtil.parseObj(prefsJson);
             if (o == null) return prefsJson;
-            o.remove("device_uuid");
+            for (String k : LOCAL_ONLY_KEYS) o.remove(k);
             return o.toString();
         } catch (Exception e) {
             return prefsJson;
         }
     }
 
-    /** prefs 合并：除 device_uuid 外逐项写入（保留本机设备标识）。 */
+    /** prefs 合并：只应用通用设置，本机专属（配置选择/同步链接/设备标识）一律保留。 */
     static void applyPrefs(String remoteJson) {
         JsonObject o = JsonUtil.parseObj(remoteJson);
         if (o == null) return;
         for (java.util.Map.Entry<String, JsonElement> e : o.entrySet()) {
             String k = e.getKey();
-            if ("device_uuid".equals(k)) continue;
+            boolean skip = false;
+            for (String x : LOCAL_ONLY_KEYS) if (x.equals(k)) { skip = true; break; }
+            if (skip) continue;
             JsonElement v = e.getValue();
             if (v == null || v.isJsonNull()) continue;
             if (v.isJsonPrimitive()) {
@@ -754,26 +1085,44 @@ public final class Sync {
         c.setRequestProperty("Content-Type", "application/octet-stream");
         c.getOutputStream().write(body);
         int code = c.getResponseCode();
+        String rev = null;
         try {
             // 记录本次写入后的版本号：避免下一次长轮询立刻又"看到自己刚写的文件"造成互推循环
-            String rev = c.getHeaderField("X-Rev");
-            if (rev != null && !rev.isEmpty()) lastGetRev = rev;
+            rev = c.getHeaderField("X-Rev");
+            if (rev != null && !rev.isEmpty()) recordRev(url, rev);
         } catch (Exception ignored) { }
+        try { recordState(url, code, body.length, rev, c.getHeaderField("Last-Modified")); } catch (Exception ignored) { }
         c.disconnect();
         return code;
     }
 
     static volatile String lastGetRev = null;
 
+    static void recordRev(String url, String rev) {
+        try {
+            String k = revKey(url);
+            REVS.put(k, rev);
+            if (k.contains("-hist")) lastGetRev = rev;
+        } catch (Exception ignored) { }
+    }
+
     static byte[] get(String url) throws Exception {
         HttpURLConnection c = open(url, "GET");
         int code = c.getResponseCode();
+        String rev = null;
         try {
-            String rev = c.getHeaderField("X-Rev");
-            if (rev != null && !rev.isEmpty()) lastGetRev = rev;
+            rev = c.getHeaderField("X-Rev");
+            if (rev != null && !rev.isEmpty()) recordRev(url, rev);
         } catch (Exception ignored) { }
-        if (code == 404 || code == 204) { c.disconnect(); return null; }
+        String lm = c.getHeaderField("Last-Modified");
+        long hlen = c.getContentLengthLong();
+        if (code == 404 || code == 204) {
+            try { recordState(url, code, 0, rev, lm); } catch (Exception ignored) { }
+            c.disconnect();
+            return null;
+        }
         if (code < 200 || code >= 300) {
+            try { recordState(url, code, Math.max(0, hlen), rev, lm); } catch (Exception ignored) { }
             c.disconnect();
             throw new Exception("下载失败（HTTP " + code + "），请检查地址/账号密码");
         }
@@ -786,6 +1135,7 @@ public final class Sync {
                 if (total > MAX_BLOB) throw new Exception("云端文件过大（超过 8MB）");
                 bos.write(buf, 0, n);
             }
+            try { recordState(url, code, total, rev, lm); } catch (Exception ignored) { }
             return bos.toByteArray();
         } finally {
             c.disconnect();
