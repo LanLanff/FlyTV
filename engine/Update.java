@@ -22,7 +22,13 @@ public final class Update {
     public static final String VERSION = "1.0.60";
     public static final String BUILD = "2026-10-09";
     // 公开版默认从 GitHub 仓库清单更新；自建服务器可用设置项 update_url 覆盖
-    private static final String DEFAULT_MANIFEST = "https://raw.githubusercontent.com/LanLanff/FlyTV/main/update.json";
+    private static final String RAW_MANIFEST = "https://raw.githubusercontent.com/LanLanff/FlyTV/main/update.json";
+    private static final String[] MANIFESTS = {
+            RAW_MANIFEST,
+            "https://ghproxy.net/" + RAW_MANIFEST,
+            "https://gh-proxy.com/" + RAW_MANIFEST,
+            "https://cdn.jsdelivr.net/gh/LanLanff/FlyTV@main/update.json"
+    };
 
     // idle / checking / downloading / verifying / extracting / restarting / error
     private static volatile String phase = "idle";
@@ -31,7 +37,36 @@ public final class Update {
 
     private static String manifestUrl() {
         String u = Setting.getString("update_url", "");
-        return u == null || u.isEmpty() ? DEFAULT_MANIFEST : u;
+        return u == null || u.isEmpty() ? "" : u;
+    }
+
+    /** 拉取更新清单：自建地址优先；否则 raw.github 不通时自动换镜像。 */
+    private static String fetchManifest() throws Exception {
+        String custom = manifestUrl();
+        if (!custom.isEmpty()) return HttpUtil.get(custom, null, 8000);
+        Exception last = null;
+        for (String u : MANIFESTS) {
+            try {
+                String t = HttpUtil.get(u, null, 6000);
+                if (t != null && t.trim().startsWith("{")) return t;
+            } catch (Exception e) {
+                last = e;
+            }
+        }
+        throw last != null ? last : new Exception("无法连接更新服务器");
+    }
+
+    /** GitHub 直链下载经常被墙：返回直链 + 镜像。 */
+    private static String[] mirrorUrls(String url) {
+        if (url == null || url.isEmpty()) return new String[]{url};
+        if (url.startsWith("https://github.com/") || url.startsWith("http://github.com/")) {
+            return new String[]{
+                    url,
+                    "https://ghproxy.net/" + url,
+                    "https://gh-proxy.com/" + url
+            };
+        }
+        return new String[]{url};
     }
 
     /** 启动时清理上次更新残留的临时目录（>1 小时）。 */
@@ -84,7 +119,7 @@ public final class Update {
         o.addProperty("version", VERSION);
         o.addProperty("build", BUILD);
         try {
-            String txt = HttpUtil.get(manifestUrl(), null, 8000);
+            String txt = fetchManifest();
             JsonObject m = JsonUtil.parseObj(txt);
             JsonObject w = m == null ? null : m.getAsJsonObject("win");
             if (w == null) {
@@ -138,7 +173,7 @@ public final class Update {
 
     private static void run() {
         try {
-            String txt = HttpUtil.get(manifestUrl(), null, 8000);
+            String txt = fetchManifest();
             JsonObject m = JsonUtil.parseObj(txt);
             JsonObject w = m == null ? null : m.getAsJsonObject("win");
             if (w == null) throw new Exception("更新清单格式不正确");
@@ -158,22 +193,35 @@ public final class Update {
                     .connectTimeout(15, TimeUnit.SECONDS)
                     .readTimeout(0, TimeUnit.MILLISECONDS)
                     .build();
-            try (Response resp = c.newCall(new Request.Builder().url(url).get().build()).execute()) {
-                ResponseBody body = resp.body();
-                if (body == null) throw new Exception("下载失败：响应为空");
-                long total = body.contentLength() > 0 ? body.contentLength() : size;
-                try (InputStream in = body.byteStream(); OutputStream out = new FileOutputStream(zip)) {
-                    byte[] buf = new byte[65536];
-                    long done = 0;
-                    int n;
-                    while ((n = in.read(buf)) > 0) {
-                        out.write(buf, 0, n);
-                        done += n;
-                        percent = total > 0 ? (int) Math.min(100, done * 100 / total) : 0;
+            Exception lastErr = null;
+            for (String u : mirrorUrls(url)) {
+                try {
+                    if (zip.exists()) zip.delete();
+                    try (Response resp = c.newCall(new Request.Builder().url(u).get().build()).execute()) {
+                        ResponseBody body = resp.body();
+                        if (!resp.isSuccessful()) throw new Exception("下载失败：HTTP " + resp.code());
+                        if (body == null) throw new Exception("下载失败：响应为空");
+                        long total = body.contentLength() > 0 ? body.contentLength() : size;
+                        try (InputStream in = body.byteStream(); OutputStream out = new FileOutputStream(zip)) {
+                            byte[] buf = new byte[65536];
+                            long done = 0;
+                            int n;
+                            while ((n = in.read(buf)) > 0) {
+                                out.write(buf, 0, n);
+                                done += n;
+                                percent = total > 0 ? (int) Math.min(100, done * 100 / total) : 0;
+                            }
+                        }
                     }
+                    if (zip.exists() && zip.length() > 0) break;
+                    throw new Exception("下载失败：文件为空");
+                } catch (Exception e) {
+                    lastErr = e;
                 }
             }
-            if (!zip.exists() || zip.length() == 0) throw new Exception("下载失败：文件为空");
+            if (!zip.exists() || zip.length() == 0) {
+                throw new Exception(lastErr != null && lastErr.getMessage() != null ? lastErr.getMessage() : "下载失败：文件为空");
+            }
 
             // 2. md5 校验
             if (!md5.isEmpty()) {
