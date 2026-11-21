@@ -14,7 +14,7 @@ public final class Stores {
     public static final long HISTORY_TIME = 60L * 24 * 60 * 60 * 1000; // 保留 60 天
 
     private static final Object LOCK = new Object();
-    private static List<JsonObject> configs, histories, keeps;
+    private static List<JsonObject> configs, histories, keeps, tombstones;
     private static long historyRevision, keepRevision;
 
     public static long now() { return System.currentTimeMillis(); }
@@ -27,12 +27,14 @@ public final class Stores {
             configs = null;
             histories = null;
             keeps = null;
+            tombstones = null;
         }
     }
 
     private static File configFile() { return new File(AppPaths.Root, "configs.json"); }
     private static File historyFile() { return new File(AppPaths.Root, "history.json"); }
     private static File keepFile() { return new File(AppPaths.Root, "keep.json"); }
+    private static File tombFile() { return new File(AppPaths.Root, "config-deleted.json"); }
 
     private static List<JsonObject> loadList(File f) {
         List<JsonObject> list = new ArrayList<>();
@@ -96,10 +98,62 @@ public final class Stores {
         }
     }
 
+    /** 配置列表有增删（不改动 time/顺序）时直接落盘。 */
+    public static void persistConfigs() {
+        synchronized (LOCK) {
+            saveList(configFile(), configs());
+        }
+    }
+
     public static void deleteConfig(String url, int type) {
         synchronized (LOCK) {
             configs().removeIf(c -> url.equals(JsonUtil.str(c, "url", "")) && JsonUtil.integer(c, "type", 0) == type);
             saveList(configFile(), configs());
+            addTombstoneLocked(url, type, now());
+        }
+    }
+
+    // ---------- 配置删除标记（让"删除"也能跨设备同步，不会被云端旧列表加回来） ----------
+    public static List<JsonObject> tombstones() {
+        synchronized (LOCK) {
+            if (tombstones == null) tombstones = loadList(tombFile());
+            return tombstones;
+        }
+    }
+
+    public static void addTombstone(String url, int type, long time) {
+        synchronized (LOCK) {
+            addTombstoneLocked(url, type, time);
+        }
+    }
+
+    private static void addTombstoneLocked(String url, int type, long time) {
+        if (url == null || url.isEmpty()) return;
+        List<JsonObject> list = tombstones();
+        for (JsonObject t : list) {
+            if (url.equals(JsonUtil.str(t, "url", "")) && JsonUtil.integer(t, "type", 0) == type) {
+                if (JsonUtil.lng(t, "time", 0) >= time) return;
+                t.addProperty("time", time);
+                saveList(tombFile(), list);
+                return;
+            }
+        }
+        JsonObject t = new JsonObject();
+        t.addProperty("url", url);
+        t.addProperty("type", type);
+        t.addProperty("time", time);
+        list.add(t);
+        saveList(tombFile(), list);
+    }
+
+    /** 该配置是否在 time 之后被删除过。 */
+    public static boolean tombstoned(String url, int type, long time) {
+        synchronized (LOCK) {
+            for (JsonObject t : tombstones()) {
+                if (url.equals(JsonUtil.str(t, "url", "")) && JsonUtil.integer(t, "type", 0) == type
+                        && JsonUtil.lng(t, "time", 0) >= time) return true;
+            }
+            return false;
         }
     }
 
