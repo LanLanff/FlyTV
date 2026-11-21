@@ -62,6 +62,7 @@ case "/api/open-external": return Diag.openExternal(p.getOrDefault("url", ""), p
                 case "/api/sync/upload": return Sync.uploadJson();
                 case "/api/sync/download": return Sync.downloadJson();
                 case "/api/sync/auto": return Sync.autoJson();
+                case "/api/sync/info": return Sync.infoJson(!"".equals(p.getOrDefault("refresh", "")));
                 case "/api/update/check": return Update.checkJson();
                 case "/api/update/apply": return Update.applyJson();
                 case "/api/update/status": return Update.statusJson();
