@@ -1,17 +1,17 @@
 {
   "win": {
-    "version": "1.0.59",
-    "size": 91323985,
-    "md5": "8c9ff528d62b49d6a9e674d4544e11b8",
-    "notes": "滚动到底自动加载（去掉加载更多按钮）；修复切标签/连续搜索/连点影片的旧结果覆盖；配置加载失败不再永久换掉你的配置；首页失败可点状态栏重试。",
-    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.59/FlyTV-1.0.59-win.zip"
+    "version": "1.0.60",
+    "size": 91330214,
+    "md5": "4639e297ed528efbd62af0716587f2d2",
+    "notes": "同步修复：配置列表不再被云端覆盖，删除配置可双向同步，自动同步包含配置链接/网盘Key，修复通知风暴与旧历史循环。",
+    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.60/FlyTV-1.0.60-win.zip"
   },
   "apk": {
-    "versionCode": 43,
-    "versionName": "1.0.43",
-    "size": 26809395,
-    "md5": "84c1a8095bb7a9de19ba8bcfcf072d66",
-    "notes": "网盘Key改为仅在「网盘配置」里手动拉取/推送（撤销自动拉取）；含「下一集/上一集从本集开头播放」修复。",
-    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.59/FlyTV-1.0.43-android-arm64.apk"
+    "versionCode": 44,
+    "versionName": "1.0.44",
+    "size": 26809490,
+    "md5": "6c09aa04095a925fa2de356714db3877",
+    "notes": "修复连接蓝牙（遥控/键盘/耳机）会退出或停止当前播放：页面不再因键盘/导航配置变化被重建；蓝牙连接导致的临时音频焦点丢失改为暂停后自动续播。",
+    "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.60/FlyTV-1.0.44-android-arm64.apk"
   }
 }
