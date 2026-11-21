@@ -1,9 +1,9 @@
 {
   "win": {
     "version": "1.0.60",
-    "size": 91330214,
-    "md5": "4639e297ed528efbd62af0716587f2d2",
-    "notes": "同步修复：配置列表不再被云端覆盖，删除配置可双向同步，自动同步包含配置链接/网盘Key，修复通知风暴与旧历史循环。",
+    "size": 91330893,
+    "md5": "249935f137a4857139eddce2b04392fa",
+    "notes": "更新检查改为多镜像回退（raw.github / ghproxy / gh-proxy / jsdelivr），国内网络可正常检查更新。同步修复：配置列表不再被云端覆盖，删除可同步，自动同步带配置/网盘Key。",
     "url": "https://github.com/LanLanff/FlyTV/releases/download/v1.0.60/FlyTV-1.0.60-win.zip"
   },
   "apk": {
